@@ -55,6 +55,8 @@ jobs:
     steps:
       - name: Checkout infra manifests
         uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
 
       - name: Install kubeval
         run: |
@@ -86,6 +88,8 @@ jobs:
     steps:
       - name: Checkout infra manifests
         uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
 
       - name: Setup kubeconfig
         env:
