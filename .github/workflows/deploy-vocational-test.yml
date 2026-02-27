@@ -23,6 +23,23 @@ on:
       KUBECONFIG_B64:
         description: 'Base64 encoded kubeconfig for K3S'
         required: true
+      ORACLE_USER:
+        description: 'Oracle DB username'
+        required: true
+      ORACLE_PASSWORD:
+        description: 'Oracle DB password'
+        required: true
+      ORACLE_CONNECTION_STRING:
+        description: 'Oracle DB connection string'
+        required: true
+      GROQ_API_KEY:
+        description: 'GROQ API key'
+      OCI_PREAUTH_URL_READ:
+        description: 'OCI pre-auth URL for reading'
+        required: true
+      SECRET_KEY:
+        description: 'Secret key for application'
+        required: true
   
   workflow_dispatch:
     inputs:
