@@ -128,6 +128,7 @@ jobs:
           GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           OCI_PREAUTH_URL_READ: ${{ secrets.OCI_PREAUTH_URL_READ }}
           SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
         run: |
           echo "Creating secrets..."
           
