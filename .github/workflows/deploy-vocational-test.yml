@@ -7,6 +7,10 @@ on:
         description: 'Image tag (e.g., main-abc1234)'
         required: true
         type: string
+    secrets:
+      KUBECONFIG_B64:
+        description: 'Base64 encoded kubeconfig for K3S'
+        required: true
   
   workflow_dispatch:
     inputs:
