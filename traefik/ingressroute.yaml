@@ -1,0 +1,50 @@
+# IngressRoute para Vocational Test
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: vocational-test
+  namespace: vocational-test
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: "Host(`vocational-test.ikigais.app`)"
+    kind: Rule
+    services:
+    - name: vocational-test
+      port: 8000
+  - match: "Host(`ikigais.app`) && Path(`/vocational`)"
+    kind: Rule
+    services:
+    - name: vocational-test
+      port: 8000
+
+---
+# IngressRoute para Traefik Dashboard (interno, puerto 8080)
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: traefik-dashboard
+  namespace: traefik
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: "Host(`traefik.ikigais.app`) && (PathPrefix(`/dashboard`) || PathPrefix(`/api`))"
+    kind: Rule
+    services:
+    - name: api@internal
+      port: "dashboard"
+
+---
+# Middleware para logging en Vocational Test (opcional)
+apiVersion: traefik.containo.us/v1alpha1
+kind: Middleware
+metadata:
+  name: request-logging
+  namespace: vocational-test
+spec:
+  headers:
+    customRequestHeaders:
+      X-Forwarded-By: "traefik"
+      X-Request-Path: "{{ .Request.URL.Path }}"

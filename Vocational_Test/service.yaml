@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vocational-test
+  namespace: vocational-test
+  labels:
+    app: vocational-test
+  annotations:
+    description: "Service for Vocational Test Application"
+spec:
+  type: ClusterIP
+  selector:
+    app: vocational-test
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    protocol: TCP
+  sessionAffinity: None
+  # sessionAffinityConfig:
+  #   clientIP:
+  #     timeoutSeconds: 10800

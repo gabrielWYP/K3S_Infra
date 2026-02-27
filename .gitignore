@@ -1,0 +1,72 @@
+# .gitignore - K3S Infrastructure
+# Protege archivos sensibles de ser cometidos accidentalmente
+
+# ============================================================================
+# 🔐 SECRETS - NUNCA COMITEAR
+# ============================================================================
+
+# kubeconfig files
+kubeconfig*
+k3s.yaml
+k3s.yaml.backup
+.kube/
+
+# Secrets archivos
+**/secrets*.yaml
+**/secret*.env
+**/secret*.json
+
+# GitHub Actions env files
+.env
+.env.local
+.env.*.local
+
+# Confidencial
+/tmp/
+.DS_Store
+
+# ============================================================================
+# 📦 DEPENDENCIAS Y BUILD
+# ============================================================================
+
+# Node modules (si algún script lo usa)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ============================================================================
+# 🔧 CONFIG LOCALES
+# ============================================================================
+
+# Archivos de configuración locales
+local.config
+local.env
+setup.config
+
+# Os X
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# ============================================================================
+# 📋 OPCIONAL: AGREGAR OTRAS APPS
+# ============================================================================
+
+# Cuando agregues Proyecto_X, Proyecto_Y, etc:
+# Proyecto_*/secretsTemplate.yaml  ← El template está bien comitear
+# Proyecto_*/secrets.actual.yaml   ← Esto NO comitear (si lo creas)

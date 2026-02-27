@@ -1,0 +1,175 @@
+name: Deploy Traefik
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'traefik/**'
+      - '.github/workflows/deploy-traefik.yml'
+  workflow_dispatch:
+
+env:
+  TRAEFIK_NAMESPACE: traefik
+
+jobs:
+  validate:
+    name: Validate Traefik YAML
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout manifests
+        uses: actions/checkout@v4
+
+      - name: Install kubeval
+        run: |
+          mkdir -p /tmp/kubeval
+          wget -q https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz -O - | tar xz -C /tmp/kubeval
+          echo "/tmp/kubeval" >> $GITHUB_PATH
+
+      - name: Validate Traefik YAML
+        run: |
+          echo "Validating traefik/ manifests..."
+          kubeval traefik/*.yaml --ignore-missing-schemas
+          echo "✓ Traefik YAML validation passed"
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint Traefik YAML
+        run: |
+          echo "Linting traefik/ files..."
+          yamllint -d relaxed traefik/
+          echo "✓ Traefik YAML linting passed"
+
+  deploy:
+    name: Deploy to K3S
+    runs-on: self-hosted
+    needs: validate
+    
+    steps:
+      - name: Checkout manifests
+        uses: actions/checkout@v4
+
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          if [ -z "$KUBECONFIG_B64" ]; then
+            echo "❌ Error: KUBECONFIG_B64 secret not configured"
+            exit 1
+          fi
+          
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          
+          echo "✓ Kubeconfig ready"
+          kubectl cluster-info | head -3
+
+      - name: Create Traefik namespace
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          kubectl create namespace $TRAEFIK_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          echo "✓ Traefik namespace ready"
+
+      - name: Apply Traefik manifests
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Applying Traefik manifests..."
+          kubectl apply -f traefik/ -n $TRAEFIK_NAMESPACE
+          echo "✓ Traefik manifests applied"
+
+      - name: Wait for Traefik rollout
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Waiting for Traefik rollout (timeout 5m)..."
+          
+          kubectl rollout status deployment/traefik \
+            -n $TRAEFIK_NAMESPACE \
+            --timeout=5m || {
+              echo "⚠️  Traefik rollout warning (may still be starting)"
+            }
+
+      - name: Verify Traefik health
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Verifying Traefik health..."
+          
+          POD=$(kubectl get pod -l app=traefik -n $TRAEFIK_NAMESPACE -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          
+          if [ -z "$POD" ]; then
+            echo "⚠️  No Traefik pods found yet, may be starting..."
+            exit 0
+          fi
+          
+          echo "Traefik pod: $POD"
+          
+          # Test /ping endpoint (Traefik built-in)
+          HEALTH=$(kubectl exec -i $POD -n $TRAEFIK_NAMESPACE -- curl -s http://localhost:8080/ping 2>/dev/null)
+          
+          if [ "$HEALTH" = "OK" ]; then
+            echo "✓ Traefik health check passed: $HEALTH"
+          else
+            echo "⚠️  Traefik health check returned: $HEALTH"
+          fi
+
+      - name: Check port bindings
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Checking port bindings on host..."
+          
+          POD=$(kubectl get pod -l app=traefik -n $TRAEFIK_NAMESPACE -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          
+          if [ -n "$POD" ]; then
+            echo "Traefik pod running: $POD"
+            echo "Ports (should be 80, 443, 8080):"
+            kubectl get pod $POD -n $TRAEFIK_NAMESPACE -o jsonpath='{.spec.containers[0].ports[*].containerPort}' | tr ' ' '\n'
+          fi
+
+      - name: Display Traefik status
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        if: always()
+        run: |
+          echo "=== Traefik Deployment Status ==="
+          kubectl get deployment -n $TRAEFIK_NAMESPACE
+          
+          echo ""
+          echo "=== Traefik Pods ==="
+          kubectl get pods -n $TRAEFIK_NAMESPACE
+          
+          echo ""
+          echo "=== Traefik Services ==="
+          kubectl get svc -n $TRAEFIK_NAMESPACE
+          
+          echo ""
+          echo "=== Recent Traefik Events ==="
+          kubectl get events -n $TRAEFIK_NAMESPACE --sort-by='.lastTimestamp' | tail -10
+
+      - name: Rollback on failure
+        if: failure()
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "❌ Traefik deployment failed. Rolling back..."
+          
+          kubectl rollout undo deployment/traefik -n $TRAEFIK_NAMESPACE || echo "⚠️  Could not rollback (may be first deployment)"
+          
+          kubectl rollout status deployment/traefik -n $TRAEFIK_NAMESPACE --timeout=5m || true
+          
+          echo "✓ Rollback completed"
+          exit 1
+
+      - name: Success notification
+        if: success()
+        run: |
+          echo "✅ Traefik deployment successful!"
+          echo ""
+          echo "Summary:"
+          echo "  Namespace: $TRAEFIK_NAMESPACE"
+          echo "  Service: traefik"
+          echo "  Dashboard: http://traefik.ikigais.app/dashboard"

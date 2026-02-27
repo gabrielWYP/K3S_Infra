@@ -1,0 +1,125 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: traefik
+  namespace: traefik
+  labels:
+    app: traefik
+    version: v1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: traefik
+  template:
+    metadata:
+      labels:
+        app: traefik
+    spec:
+      serviceAccountName: traefik
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      containers:
+      - name: traefik
+        image: traefik:v2.10
+        imagePullPolicy: IfNotPresent
+        
+        # Argumentos de Traefik
+        args:
+          # API y Dashboard (solo interno)
+          - "--api.insecure=true"
+          - "--api.dashboard=true"
+          
+          # Proveedores
+          - "--providers.kubernetescrd"
+          - "--providers.kubernetesingress"
+          
+          # Entrypoints
+          - "--entrypoints.web.address=:80"
+          - "--entrypoints.websecure.address=:443"
+          
+          # Logging
+          - "--log.level=INFO"
+          - "--accesslog=true"
+          - "--accesslog.filepath=/var/log/traefik/access.log"
+          
+          # Métricas Prometheus (opcional, comentado)
+          # - "--metrics.prometheus=true"
+          
+          # Circuit breaker y timeouts
+          - "--entrypoints.web.transport.respondingTimeouts.readTimeout=10s"
+          - "--entrypoints.web.transport.respondingTimeouts.writeTimeout=10s"
+        
+        ports:
+        - name: web
+          containerPort: 80
+          protocol: TCP
+          hostPort: 80
+        - name: websecure
+          containerPort: 443
+          protocol: TCP
+          hostPort: 443
+        - name: dashboard
+          containerPort: 8080
+          protocol: TCP
+        
+        # Health check
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 2
+          failureThreshold: 3
+        
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          timeoutSeconds: 2
+          failureThreshold: 2
+        
+        # Recursos
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+        
+        # Security context
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          runAsNonRoot: false
+          runAsUser: 65534
+          capabilities:
+            add:
+              - NET_BIND_SERVICE
+            drop:
+              - ALL
+        
+        # Volume mounts
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        - name: logs
+          mountPath: /var/log/traefik
+      
+      # Volumes
+      volumes:
+      - name: tmp
+        emptyDir: {}
+      - name: logs
+        emptyDir: {}
+      
+      # Tolerations (si tienes taints en el nodo, descomenta)
+      # tolerations:
+      # - key: "node-role.kubernetes.io/master"
+      #   operator: "Equal"
+      #   value: "true"
+      #   effect: "NoSchedule"
