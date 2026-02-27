@@ -185,6 +185,7 @@ jobs:
           KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           REPO_OWNER="${{ github.repository_owner }}"
+          REPO_OWNER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
           IMAGE="${REGISTRY}/${REPO_OWNER}/gestpro-vocationaltest:${IMAGE_TAG}"
           
           echo "Updating deployment image..."
