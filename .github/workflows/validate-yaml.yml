@@ -1,0 +1,123 @@
+name: Validate Kubernetes YAML
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'k3s/**'
+      - 'traefik/**'
+      - '.github/workflows/validate-yaml.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'k3s/**'
+      - 'traefik/**'
+
+jobs:
+  validate:
+    name: Validate YAML
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout manifests
+        uses: actions/checkout@v4
+
+      - name: Install kubeval
+        run: |
+          mkdir -p /tmp/kubeval
+          wget -q https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz -O - | tar xz -C /tmp/kubeval
+          echo "/tmp/kubeval" >> $GITHUB_PATH
+
+      - name: Validate K3S YAML syntax
+        run: |
+          if [ ! -d "k3s" ]; then
+            echo "⚠️  k3s/ directory not found, skipping validation"
+            exit 0
+          fi
+          
+          echo "Validating k3s/ manifests..."
+          kubeval k3s/*.yaml --ignore-missing-schemas
+          echo "✓ K3S YAML validation passed"
+
+      - name: Validate Traefik YAML syntax
+        run: |
+          if [ ! -d "traefik" ]; then
+            echo "⚠️  traefik/ directory not found, skipping validation"
+            exit 0
+          fi
+          
+          echo "Validating traefik/ manifests..."
+          kubeval traefik/*.yaml --ignore-missing-schemas
+          echo "✓ Traefik YAML validation passed"
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint K3S YAML
+        run: |
+          if [ ! -d "k3s" ]; then
+            echo "⚠️  k3s/ directory not found, skipping linting"
+            exit 0
+          fi
+          
+          echo "Linting k3s/ YAML files..."
+          yamllint -d relaxed k3s/
+          echo "✓ K3S YAML linting passed"
+
+      - name: Lint Traefik YAML
+        run: |
+          if [ ! -d "traefik" ]; then
+            echo "⚠️  traefik/ directory not found, skipping linting"
+            exit 0
+          fi
+          
+          echo "Linting traefik/ YAML files..."
+          yamllint -d relaxed traefik/
+          echo "✓ Traefik YAML linting passed"
+
+      - name: Check for required files
+        run: |
+          echo "Checking required manifest files..."
+          
+          required_dirs=("k3s" "traefik")
+          for dir in "${required_dirs[@]}"; do
+            if [ ! -d "$dir" ]; then
+              echo "❌ Missing directory: $dir"
+              exit 1
+            fi
+          done
+          
+          echo "✓ Required directories present"
+
+      - name: Validate manifest structure
+        run: |
+          echo "Validating manifest structure..."
+          
+          # Check for apiVersion and kind in all files
+          for file in k3s/*.yaml traefik/*.yaml; do
+            if [ -f "$file" ]; then
+              if ! grep -q "^apiVersion:" "$file"; then
+                echo "❌ Missing apiVersion in $file"
+                exit 1
+              fi
+              if ! grep -q "^kind:" "$file"; then
+                echo "❌ Missing kind in $file"
+                exit 1
+              fi
+            fi
+          done
+          
+          echo "✓ All manifests have required fields"
+
+      - name: Validation summary
+        run: |
+          echo "✅ All YAML validations passed!"
+          echo ""
+          echo "Validated directories:"
+          echo "  • k3s/"
+          echo "  • traefik/"
+          echo ""
+          echo "Checks performed:"
+          echo "  ✓ kubeval syntax validation"
+          echo "  ✓ yamllint linting"
+          echo "  ✓ Required fields present (apiVersion, kind)"

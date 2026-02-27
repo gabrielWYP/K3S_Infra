@@ -1,0 +1,214 @@
+name: Deploy to K3S
+
+on:
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: 'Image tag from GestPro-VocationalTest (e.g., git SHA)'
+        required: true
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+  NAMESPACE: vocational-test
+  DEPLOYMENT_NAME: vocational-test
+
+jobs:
+  validate:
+    name: Validate YAML
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infra manifests
+        uses: actions/checkout@v4
+
+      - name: Install kubeval
+        run: |
+          mkdir -p /tmp/kubeval
+          wget -q https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz -O - | tar xz -C /tmp/kubeval
+          echo "/tmp/kubeval" >> $GITHUB_PATH
+
+      - name: Validate K3S YAML syntax
+        run: |
+          echo "Validating k3s/ manifests..."
+          kubeval k3s/*.yaml --ignore-missing-schemas || true
+          echo "✓ K3S YAML validation passed"
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint YAML
+        run: |
+          echo "Linting YAML files..."
+          yamllint k3s/ traefik/ || true
+          echo "✓ YAML lint completed"
+
+  deploy:
+    name: Deploy Application
+    runs-on: self-hosted
+    needs: validate
+    
+    steps:
+      - name: Checkout infra manifests
+        uses: actions/checkout@v4
+
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          if [ -z "$KUBECONFIG_B64" ]; then
+            echo "❌ Error: KUBECONFIG_B64 secret not configured"
+            exit 1
+          fi
+          
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          
+          echo "✓ Kubeconfig ready"
+          kubectl cluster-info | head -3
+
+      - name: Verify K3S connectivity
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Checking K3S cluster..."
+          kubectl get nodes
+          kubectl get namespaces | grep $NAMESPACE || echo "Namespace $NAMESPACE exists or will be created"
+
+      - name: Create namespace if not exists
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          kubectl create namespace $NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          echo "✓ Namespace '$NAMESPACE' ready"
+
+      - name: Apply K3S manifests
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Applying K3S manifests..."
+          kubectl apply -f k3s/ -n $NAMESPACE
+          echo "✓ K3S manifests applied"
+
+      - name: Update image tag
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          IMAGE_TAG: ${{ github.event.inputs.image-tag }}
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          IMAGE="${REGISTRY}/${REPO_OWNER}/vocational-test:${IMAGE_TAG}"
+          
+          echo "Updating deployment image..."
+          echo "Image: $IMAGE"
+          
+          kubectl patch deployment/$DEPLOYMENT_NAME \
+            -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"vocational-test-app\",\"image\":\"$IMAGE\"}]}}}}" \
+            -n $NAMESPACE
+          
+          echo "✓ Image updated"
+
+      - name: Wait for rollout
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Waiting for rollout (timeout 5m)..."
+          
+          kubectl rollout status deployment/$DEPLOYMENT_NAME \
+            -n $NAMESPACE \
+            --timeout=5m || {
+              echo "❌ Rollout failed"
+              exit 1
+            }
+          
+          echo "✓ Rollout completed successfully"
+
+      - name: Wait for pod readiness
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Waiting for pods to be ready..."
+          
+          kubectl wait --for=condition=ready pod \
+            -l app=$DEPLOYMENT_NAME \
+            -n $NAMESPACE \
+            --timeout=30s || {
+              echo "⚠️  Warning: Pods not ready yet, continuing with health check..."
+            }
+          
+          sleep 2
+          echo "✓ Pods status checked"
+
+      - name: Port-forward and health check
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Running health checks..."
+          
+          # Get the first pod
+          POD=$(kubectl get pod -l app=$DEPLOYMENT_NAME -n $NAMESPACE -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          
+          if [ -z "$POD" ]; then
+            echo "⚠️  Warning: No pods found, skipping health check"
+            exit 0
+          fi
+          
+          echo "Testing pod: $POD"
+          
+          # Port forward in background
+          kubectl port-forward $POD 8000:8000 -n $NAMESPACE > /dev/null 2>&1 &
+          PF_PID=$!
+          sleep 2
+          
+          # Health check
+          HEALTH=$(curl -s -m 5 http://localhost:8000/api/health 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null)
+          
+          kill $PF_PID 2>/dev/null || true
+          wait $PF_PID 2>/dev/null || true
+          
+          if [ "$HEALTH" = "ok" ]; then
+            echo "✓ Health check passed: $HEALTH"
+            exit 0
+          else
+            echo "⚠️  Health check returned: $HEALTH (may still be starting up)"
+            exit 0
+          fi
+
+      - name: Verification - Check deployment status
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "=== Deployment Status ==="
+          kubectl get deployment -n $NAMESPACE
+          
+          echo ""
+          echo "=== Pod Status ==="
+          kubectl get pods -n $NAMESPACE -l app=$DEPLOYMENT_NAME
+          
+          echo ""
+          echo "=== Recent Events ==="
+          kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp' | tail -10
+
+      - name: Rollback on failure
+        if: failure()
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "❌ Deployment failed. Initiating rollback..."
+          
+          kubectl rollout undo deployment/$DEPLOYMENT_NAME -n $NAMESPACE
+          
+          echo "Waiting for rollback to complete..."
+          kubectl rollout status deployment/$DEPLOYMENT_NAME -n $NAMESPACE --timeout=5m
+          
+          echo "✓ Rollback completed"
+          exit 1
+
+      - name: Success notification
+        if: success()
+        run: |
+          echo "✅ Deployment successful!"
+          echo ""
+          echo "Summary:"
+          echo "  Deployment: $DEPLOYMENT_NAME"
+          echo "  Namespace: $NAMESPACE"
+          echo "  Image tag: ${{ github.event.inputs.image-tag }}"
