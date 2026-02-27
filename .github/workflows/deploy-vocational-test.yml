@@ -108,7 +108,6 @@ jobs:
             --from-literal=ORACLE_CONNECTION_STRING="$ORACLE_CONNECTION_STRING" \
             --from-literal=GROQ_API_KEY="$GROQ_API_KEY" \
             --from-literal=OCI_PREAUTH_URL_READ="$OCI_PREAUTH_URL_READ" \
-            --from-literal=OCI_PREAUTH_URL_WRITE="$OCI_PREAUTH_URL_WRITE" \
             --from-literal=SECRET_KEY="$SECRET_KEY" \
             -n $KUBE_NAMESPACE \
             --dry-run=client -o yaml | kubectl apply -f -
