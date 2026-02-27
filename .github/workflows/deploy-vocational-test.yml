@@ -7,6 +7,18 @@ on:
         description: 'Image tag (e.g., main-abc1234)'
         required: true
         type: string
+      kube-namespace:
+        description: 'Kubernetes namespace'
+        required: true
+        type: string
+      kube-deployment:
+        description: 'Kubernetes deployment name'
+        required: true
+        type: string
+      registry:
+        description: 'Container registry (e.g., ghcr.io)'
+        required: true
+        type: string
     secrets:
       KUBECONFIG_B64:
         description: 'Base64 encoded kubeconfig for K3S'
@@ -85,7 +97,7 @@ jobs:
       - name: Create namespace
         env:
           KUBECONFIG: /tmp/kubeconfig
-          KUBE_NAMESPACE: ${{ vars.KUBE_NAMESPACE }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
         run: |
           kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
           echo "✓ Namespace '$KUBE_NAMESPACE' ready"
@@ -117,7 +129,7 @@ jobs:
       - name: Apply manifests
         env:
           KUBECONFIG: /tmp/kubeconfig
-          KUBE_NAMESPACE: ${{ vars.KUBE_NAMESPACE }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
         run: |
           echo "Applying Vocational_Test manifests..."
           kubectl apply -f Vocational_Test/ -n $KUBE_NAMESPACE
@@ -146,9 +158,9 @@ jobs:
         env:
           KUBECONFIG: /tmp/kubeconfig
           IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
-          REGISTRY: ${{ vars.REGISTRY }}
-          KUBE_NAMESPACE: ${{ vars.KUBE_NAMESPACE }}
-          KUBE_DEPLOYMENT: ${{ vars.KUBE_DEPLOYMENT }}
+          REGISTRY: ${{ inputs.registry }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           REPO_OWNER="${{ github.repository_owner }}"
           IMAGE="${REGISTRY}/${REPO_OWNER}/gestpro-vocationaltest:${IMAGE_TAG}"
@@ -165,8 +177,8 @@ jobs:
       - name: Wait for rollout
         env:
           KUBECONFIG: /tmp/kubeconfig
-          KUBE_NAMESPACE: ${{ vars.KUBE_NAMESPACE }}
-          KUBE_DEPLOYMENT: ${{ vars.KUBE_DEPLOYMENT }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           echo "Waiting for rollout (timeout 5m)..."
           
@@ -183,8 +195,8 @@ jobs:
       - name: Wait for pod readiness
         env:
           KUBECONFIG: /tmp/kubeconfig
-          KUBE_NAMESPACE: ${{ vars.KUBE_NAMESPACE }}
-          KUBE_DEPLOYMENT: ${{ vars.KUBE_DEPLOYMENT }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           echo "Waiting for pods to be ready..."
           
@@ -201,8 +213,8 @@ jobs:
       - name: Health check
         env:
           KUBECONFIG: /tmp/kubeconfig
-          KUBE_NAMESPACE: ${{ vars.KUBE_NAMESPACE }}
-          KUBE_DEPLOYMENT: ${{ vars.KUBE_DEPLOYMENT }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           echo "Running health checks..."
           
@@ -236,8 +248,8 @@ jobs:
       - name: Verify deployment
         env:
           KUBECONFIG: /tmp/kubeconfig
-          KUBE_NAMESPACE: ${{ vars.KUBE_NAMESPACE }}
-          KUBE_DEPLOYMENT: ${{ vars.KUBE_DEPLOYMENT }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           echo "=== Deployment Status ==="
           kubectl get deployment -n $KUBE_NAMESPACE
@@ -253,8 +265,8 @@ jobs:
       - name: Success notification
         if: success()
         env:
-          KUBE_NAMESPACE: ${{ vars.KUBE_NAMESPACE }}
-          KUBE_DEPLOYMENT: ${{ vars.KUBE_DEPLOYMENT }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           echo "✅ Deployment successful!"
           echo ""
