@@ -1,0 +1,22 @@
+name: Deploy Sentiment Analysis
+on:
+  push:
+    branches:
+      - main
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+
+    - name: Set up Kubeconfig
+      run: |
+        echo "${{ secrets.KUBECONFIG }}" > kubeconfig
+        export KUBECONFIG=$(pwd)/kubeconfig
+
+    - name: Deploy to Kubernetes
+      run: |
+        kubectl apply -f Vocational_Test/03-workloads/deployment.yaml
+        kubectl apply -f Vocational_Test/04-networking/service.yaml
+        kubectl apply -f Vocational_Test/04-networking/ingressroute.yaml
