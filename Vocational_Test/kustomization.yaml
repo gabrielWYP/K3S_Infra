@@ -1,0 +1,11 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - 01-rbac/serviceaccount.yaml
+  - 01-rbac/role.yaml
+  - 01-rbac/rolebinding.yaml
+  - 02-config/configmap.yaml
+  - 03-workloads/deployment.yaml
+  - 04-networking/service.yaml
+  - 04-networking/ingressroute.yaml
