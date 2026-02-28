@@ -1,0 +1,52 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vocational-test-deployment
+  labels:
+    app: vocational-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: vocational-test
+  template:
+    metadata:
+      labels:
+        app: vocational-test
+    spec:
+      serviceAccountName: vocational-test-sa
+      containers:
+      - name: vocational-test-app
+        image: ghcr.io/gabrielwyp/gestpro-vocationaltest:main-0f2f063
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8000
+        envFrom:
+        - configMapRef:
+            name: vocational-test-config
+        - secretRef:
+          name: vocational-test-secrets
+        
+        # (He mantenido tus Probes y Resources, están perfectos para MLOps)
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          failureThreshold: 30
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+
+---

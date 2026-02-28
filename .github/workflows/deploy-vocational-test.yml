@@ -242,7 +242,7 @@ jobs:
           echo "Running health checks..."
           
           # Get the first pod
-          POD=$(kubectl get pod -l app=$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+          POD=$(kubectl get pod -l app=$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
           
           if [ -z "$POD" ]; then
             echo "⚠️  Warning: No pods found, skipping health check"

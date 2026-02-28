@@ -1,0 +1,17 @@
+---
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: vocational-test-ingress
+  labels:
+    app: vocational-test
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: Host(`vocational-test.ikigais.app`)
+    kind: Rule
+    services:
+    - name: vocational-test-service
+      port: 8000
+---
