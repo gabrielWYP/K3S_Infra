@@ -27,7 +27,7 @@ spec:
         - configMapRef:
             name: vocational-test-config
         - secretRef:
-          name: vocational-test-secrets
+            name: vocational-test-secrets
         
         # (He mantenido tus Probes y Resources, están perfectos para MLOps)
         startupProbe:
