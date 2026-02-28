@@ -154,7 +154,7 @@ jobs:
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
         run: |
           echo "Applying Vocational_Test manifests..."
-          kubectl apply -f Vocational_Test/ -n $KUBE_NAMESPACE
+          kubectl apply -k Vocational_Test/ -n $KUBE_NAMESPACE
           echo "✓ Manifests applied"
 
       - name: Determine image tag
