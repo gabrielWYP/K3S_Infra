@@ -2,7 +2,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vocational-test-deployment
+  name: vocational-test
   labels:
     app: vocational-test
 spec:
