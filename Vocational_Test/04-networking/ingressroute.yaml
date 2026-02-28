@@ -21,4 +21,10 @@ spec:
     - name: vocational-test-service
       port: 8000
       weight: 1
+  - match: Host(`ikigais.app`)
+    kind: Rule
+    services:
+    - name: vocational-test-service
+      port: 8000
+      weight: 1
 ---
