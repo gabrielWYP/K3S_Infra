@@ -10,6 +10,7 @@ kubeconfig*
 k3s.yaml
 k3s.yaml.backup
 .kube/
+*.md
 
 # Secrets archivos
 **/secrets*.yaml

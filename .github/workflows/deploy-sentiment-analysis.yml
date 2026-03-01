@@ -1,8 +1,28 @@
-name: Deploy Sentiment Analysis
+name: Deploy Sentiment Analysis to K3S
 on:
-  push:
-    branches:
-      - main
+  workflow_call:
+  
+    inputs:
+      image-tag:
+        description: 'Image tag for GHCR'
+        required: true
+        type: string
+      kube-namespace:
+        description: 'Kubernetes namespace'
+        required: true
+        type: string
+      kube-deployment:
+        description: 'Kubernetes deployment name'
+        required: true
+        type: string
+      registry:
+        description: 'Container registry (e.g., ghcr.io)'
+        required: true
+        type: string
+
+    secrets:
+
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
