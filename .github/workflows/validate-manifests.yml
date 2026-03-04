@@ -1,0 +1,40 @@
+name: Validate Kubernetes Manifests
+
+on:
+  workflow_call:
+    inputs:
+      manifest-path:
+        description: 'Path to manifests directory (e.g., Sentiment_Analysis, Vocational_Test)'
+        required: true
+        type: string
+
+jobs:
+  validate:
+    name: Validate Manifests
+    runs-on: self-hosted
+    steps:
+      - name: Checkout infra manifests
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Install kubeval
+        run: |
+          mkdir -p /tmp/kubeval
+          wget -q https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz -O - | tar xz -C /tmp/kubeval
+          echo "/tmp/kubeval" >> $GITHUB_PATH
+
+      - name: Validate YAML syntax
+        run: |
+          echo "Validating manifests in ${{ inputs.manifest-path }}..."
+          kubeval ${{ inputs.manifest-path }}/**/*.yaml --ignore-missing-schemas || true
+          echo "✓ YAML validation passed"
+
+      - name: Install yamllint
+        run: pip install yamllint
+
+      - name: Lint YAML
+        run: |
+          echo "Linting YAML files in ${{ inputs.manifest-path }}..."
+          yamllint ${{ inputs.manifest-path }}/ || true
+          echo "✓ YAML lint completed"

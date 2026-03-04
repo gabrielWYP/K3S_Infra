@@ -1,42 +1,160 @@
 name: Deploy Sentiment Analysis to K3S
+
 on:
   workflow_call:
-  
     inputs:
       image-tag:
-        description: 'Image tag for GHCR'
+        description: 'Image tag (e.g., main-abc1234)'
         required: true
         type: string
       kube-namespace:
         description: 'Kubernetes namespace'
         required: true
         type: string
-      kube-deployment:
-        description: 'Kubernetes deployment name'
-        required: true
-        type: string
       registry:
         description: 'Container registry (e.g., ghcr.io)'
         required: true
         type: string
-
     secrets:
-
+      KUBECONFIG_B64:
+        description: 'Base64 encoded kubeconfig for K3S'
+        required: true
+      ORACLE_USER:
+        description: 'Oracle DB username'
+        required: true
+      ORACLE_PASSWORD:
+        description: 'Oracle DB password'
+        required: true
+      ORACLE_CONNECTION_STRING:
+        description: 'Oracle DB connection string'
+        required: true
+      SECRET_KEY:
+        description: 'Secret key for application'
+        required: true
+  
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: 'Image tag from sentiment_elections_dev (e.g., main-abc1234)'
+        required: true
+        type: string
 
 jobs:
+  validate:
+    name: Validate Manifests
+    uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
+    with:
+      manifest-path: Sentiment_Analysis
+
   deploy:
-    runs-on: ubuntu-latest
+    name: Deploy to K3S
+    runs-on: self-hosted
+    environment: sentiment-analysis
+    needs: validate
+    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+      - name: Checkout infra manifests
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
 
-    - name: Set up Kubeconfig
-      run: |
-        echo "${{ secrets.KUBECONFIG }}" > kubeconfig
-        export KUBECONFIG=$(pwd)/kubeconfig
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          if [ -z "$KUBECONFIG_B64" ]; then
+            echo "❌ Error: KUBECONFIG_B64 secret not configured"
+            exit 1
+          fi
+          
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          
+          echo "✓ Kubeconfig ready"
+          kubectl cluster-info | head -3
 
-    - name: Deploy to Kubernetes
-      run: |
-        kubectl apply -f Vocational_Test/03-workloads/deployment.yaml
-        kubectl apply -f Vocational_Test/04-networking/service.yaml
-        kubectl apply -f Vocational_Test/04-networking/ingressroute.yaml
+      - name: Verify K3S connectivity
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Checking K3S cluster..."
+          kubectl get nodes
+          echo "✓ Cluster connectivity verified"
+
+      - name: Create namespace
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        run: |
+          kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          echo "✓ Namespace '$KUBE_NAMESPACE' ready"
+
+      - name: Create app secrets
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          ORACLE_USER: ${{ secrets.ORACLE_USER }}
+          ORACLE_PASSWORD: ${{ secrets.ORACLE_PASSWORD }}
+          ORACLE_CONNECTION_STRING: ${{ secrets.ORACLE_CONNECTION_STRING }}
+          SECRET_KEY: ${{ secrets.SECRET_KEY }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        run: |
+          echo "Creating secrets..."
+          
+          kubectl create secret generic sentiment-analysis-secrets \
+            --from-literal=ORACLE_USER="$ORACLE_USER" \
+            --from-literal=ORACLE_PASSWORD="$ORACLE_PASSWORD" \
+            --from-literal=ORACLE_CONNECTION_STRING="$ORACLE_CONNECTION_STRING" \
+            --from-literal=SECRET_KEY="$SECRET_KEY" \
+            -n $KUBE_NAMESPACE \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "✓ Secrets created"
+
+      - name: Deploy with Kustomize
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          IMAGE_TAG: ${{ inputs.image-tag }}
+          REGISTRY: ${{ inputs.registry }}
+        run: |
+          echo "Deploying Sentiment Analysis..."
+          
+          kubectl apply -k Sentiment_Analysis/ -n $KUBE_NAMESPACE
+          
+          echo "✓ Deployment applied"
+
+      - name: Verify deployments
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        run: |
+          echo "Waiting for deployments to be ready..."
+          
+          kubectl rollout status deployment/sentiment-analysis-web -n $KUBE_NAMESPACE --timeout=5m
+          kubectl rollout status deployment/sentiment-analysis-model -n $KUBE_NAMESPACE --timeout=5m
+          
+          echo "✓ All deployments ready"
+          
+          kubectl get pods -n $KUBE_NAMESPACE -l app=sentiment-analysis
+
+      - name: Check service connectivity
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        run: |
+          echo "Verifying services..."
+          kubectl get svc -n $KUBE_NAMESPACE -l app=sentiment-analysis
+          echo "✓ Services configured"
+
+      - name: Deployment summary
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        run: |
+          echo "===== Deployment Summary ====="
+          echo "Namespace: $KUBE_NAMESPACE"
+          echo "Image tag: ${{ inputs.image-tag }}"
+          echo ""
+          echo "Resources:"
+          kubectl get all -n $KUBE_NAMESPACE -l app=sentiment-analysis

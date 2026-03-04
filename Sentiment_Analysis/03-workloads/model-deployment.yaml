@@ -1,0 +1,51 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sentiment-analysis-model
+  labels:
+    app: sentiment-analysis
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sentiment-analysis
+  template:
+    metadata:
+      labels:
+        app: sentiment-analysis
+    spec:
+      serviceAccountName: sentiment-analysis-sa
+      containers:
+      - name: sentiment-analysis-model
+        image: ghcr.io/gabrielwyp/sentiment_elections_dev/sentiment-service:main-4bdfc13
+        imagePullPolicy: IfNotPresent
+        ports:
+        - name: http
+          containerPort: 8001
+        envFrom:
+        - configMapRef:
+            name: sentiment-analysis-config
+        - secretRef:
+            name: sentiment-analysis-secrets
+        
+        startupProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          failureThreshold: 30
+          periodSeconds: 5
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 30
+
+---

@@ -1,5 +1,18 @@
 ---
-apiVersion:
-kind: ingressroute
-
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
 metadata:
+  name: sentiment-analysis-ingress
+  labels:
+    app: sentiment-analysis
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: Host(`sentiment-analysis.ikigais.app`)
+    kind: Rule
+    services:
+    - name: sentiment-web-service
+      port: 8000
+      weight: 1
+---
