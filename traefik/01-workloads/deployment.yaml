@@ -17,8 +17,7 @@ spec:
         app: traefik
     spec:
       serviceAccountName: traefik
-      hostNetwork: true
-      dnsPolicy: ClusterFirstWithHostNet
+      dnsPolicy: ClusterFirst
       containers:
       - name: traefik
         image: traefik:v2.10
@@ -35,8 +34,8 @@ spec:
           - "--providers.kubernetesingress"
           
           # Entrypoints
-          - "--entrypoints.web.address=:80"
-          - "--entrypoints.websecure.address=:443"
+          - "--entrypoints.web.address=:30080"
+          - "--entrypoints.websecure.address=:30443"
           
           # Logging
           - "--log.level=INFO"
@@ -52,13 +51,11 @@ spec:
         
         ports:
         - name: web
-          containerPort: 80
+          containerPort: 30080
           protocol: TCP
-          hostPort: 80
         - name: websecure
-          containerPort: 443
+          containerPort: 30443
           protocol: TCP
-          hostPort: 443
         - name: dashboard
           containerPort: 8080
           protocol: TCP

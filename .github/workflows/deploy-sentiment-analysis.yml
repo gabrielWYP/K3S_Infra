@@ -119,9 +119,7 @@ jobs:
           REGISTRY: ${{ inputs.registry }}
         run: |
           echo "Deploying Sentiment Analysis..."
-          
           kubectl apply -k Sentiment_Analysis/ -n $KUBE_NAMESPACE
-          
           echo "✓ Deployment applied"
 
       - name: Verify deployments
