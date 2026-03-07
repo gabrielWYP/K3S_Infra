@@ -11,8 +11,16 @@ on:
         description: 'Kubernetes namespace'
         required: true
         type: string
+      kube-deployment:
+        description: 'Kubernetes deployment for each model or web'
+        type: string
+        required: true
       registry:
         description: 'Container registry (e.g., ghcr.io)'
+        required: true
+        type: string
+      port:
+        description : 'Port where the application is listening'
         required: true
         type: string
     secrets:
@@ -24,9 +32,6 @@ on:
         required: true
       ORACLE_PASSWORD:
         description: 'Oracle DB password'
-        required: true
-      ORACLE_CONNECTION_STRING:
-        description: 'Oracle DB connection string'
         required: true
       SECRET_KEY:
         description: 'Secret key for application'
@@ -111,7 +116,7 @@ jobs:
           
           echo "✓ Secrets created"
 
-      - name: Deploy with Kustomize
+      - name: Apply manifests
         env:
           KUBECONFIG: /tmp/kubeconfig
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
@@ -120,39 +125,147 @@ jobs:
         run: |
           echo "Deploying Sentiment Analysis..."
           kubectl apply -k Sentiment_Analysis/ -n $KUBE_NAMESPACE
-          echo "✓ Deployment applied"
+          echo "✓ Manifests applied"
 
-      - name: Verify deployments
+      - name: Determine image tag
+        id: image-tag
+        run: |
+          # Para reusable workflow (workflow_call)
+          TAG="${{ inputs.image-tag }}"
+          
+          # Fallback para workflow_dispatch
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.event.inputs.image-tag }}"
+          fi
+          
+          if [ -z "$TAG" ]; then
+            echo "❌ No image tag provided"
+            exit 1
+          fi
+          
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "📦 Image tag: $TAG"
+
+      - name: Update deployment image
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
+          REGISTRY: ${{ inputs.registry }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_OWNER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
+          IMAGE="${REGISTRY}/${REPO_OWNER}/gestpro-vocationaltest:${IMAGE_TAG}"
+          
+          echo "Updating deployment image..."
+          echo "   Image: $IMAGE"
+          
+          kubectl patch deployment/$KUBE_DEPLOYMENT \
+            -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"vocational-test-app\",\"image\":\"$IMAGE\"}]}}}}" \
+            -n $KUBE_NAMESPACE
+          
+          echo "✓ Image updated"
+
+      - name: Wait for rollout
         env:
           KUBECONFIG: /tmp/kubeconfig
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
-          echo "Waiting for deployments to be ready..."
+          echo "Waiting for rollout (timeout 5m)..."
           
-          kubectl rollout status deployment/sentiment-analysis-web -n $KUBE_NAMESPACE --timeout=5m
-          kubectl rollout status deployment/sentiment-analysis-model -n $KUBE_NAMESPACE --timeout=5m
+          kubectl rollout status deployment/$KUBE_DEPLOYMENT \
+            -n $KUBE_NAMESPACE \
+            --timeout=5m || {
+              echo "❌ Rollout failed, initiating rollback..."
+              kubectl rollout undo deployment/$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE
+              exit 1
+            }
           
-          echo "✓ All deployments ready"
-          
-          kubectl get pods -n $KUBE_NAMESPACE -l app=sentiment-analysis
+          echo "✓ Rollout completed successfully"
 
-      - name: Check service connectivity
+      - name: Wait for pod readiness
         env:
           KUBECONFIG: /tmp/kubeconfig
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
-          echo "Verifying services..."
-          kubectl get svc -n $KUBE_NAMESPACE -l app=sentiment-analysis
-          echo "✓ Services configured"
+          echo "Waiting for pods to be ready..."
+          
+          kubectl wait --for=condition=ready pod \
+            -l app=$KUBE_DEPLOYMENT \
+            -n $KUBE_NAMESPACE \
+            --timeout=30s || {
+              echo "⚠️  Warning: Pods not ready yet, continuing with health check..."
+            }
+          
+          sleep 2
+          echo "✓ Pods status checked"
 
-      - name: Deployment summary
+      - name: Health check
         env:
           KUBECONFIG: /tmp/kubeconfig
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+          port: ${{ inputs.port }}
         run: |
-          echo "===== Deployment Summary ====="
-          echo "Namespace: $KUBE_NAMESPACE"
-          echo "Image tag: ${{ inputs.image-tag }}"
+          echo "Running health checks..."
+          
+          # Get the first pod
+          POD=$(kubectl get pod -l app=$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+          
+          if [ -z "$POD" ]; then
+            echo "⚠️  Warning: No pods found, skipping health check"
+            exit 0
+          fi
+          
+          echo "   Testing pod: $POD"
+          
+          # Port forward in background
+          kubectl port-forward $POD $port:$port -n $KUBE_NAMESPACE > /dev/null 2>&1 &
+          PF_PID=$!
+          sleep 2
+          
+          # Health check
+          HEALTH=$(curl -s -m 5 http://localhost:$port/health 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null)
+          
+          kill $PF_PID 2>/dev/null || true
+          wait $PF_PID 2>/dev/null || true
+          
+          if [ "$HEALTH" = "healthy" ] || [ "$HEALTH" = "ok" ]; then
+            echo "✓ Health check passed: $HEALTH"
+          else
+            echo "⚠️  Health check returned: $HEALTH"
+          fi
+
+      - name: Verify deployment
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        run: |
+          echo "=== Deployment Status ==="
+          kubectl get deployment -n $KUBE_NAMESPACE
+          
           echo ""
-          echo "Resources:"
-          kubectl get all -n $KUBE_NAMESPACE -l app=sentiment-analysis
+          echo "=== Pod Status ==="
+          kubectl get pods -n $KUBE_NAMESPACE -l app=$KUBE_DEPLOYMENT
+          
+          echo ""
+          echo "=== Recent Events ==="
+          kubectl get events -n $KUBE_NAMESPACE --sort-by='.lastTimestamp' | tail -10
+
+      - name: Success notification
+        if: success()
+        env:
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        run: |
+          echo "✅ Deployment successful!"
+          echo ""
+          echo "Summary:"
+          echo "  Deployment: $KUBE_DEPLOYMENT"
+          echo "  Namespace: $KUBE_NAMESPACE"
+          echo "  Image tag: ${{ steps.image-tag.outputs.tag }}"
+          echo "  Triggered by: ${{ github.event_name }}"
