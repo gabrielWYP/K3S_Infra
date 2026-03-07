@@ -18,6 +18,7 @@ spec:
       serviceAccountName: sentiment-analysis-sa
       containers:
       - name: sentiment-analysis-model
+        # image is managed by CI — updated via 'kubectl set image' on each deploy
         image: ghcr.io/gabrielwyp/sentiment_elections_dev/sentiment-service:main-4bdfc13
         imagePullPolicy: IfNotPresent
         ports:

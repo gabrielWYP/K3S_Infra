@@ -15,6 +15,14 @@ on:
         description: 'Kubernetes deployment for each model or web'
         type: string
         required: true
+      image-name:
+        description: 'Image name within the repo (e.g., sentiment-service, web-service)'
+        required: true
+        type: string
+      container-name:
+        description: 'Container name inside the K8s deployment spec'
+        required: true
+        type: string
       registry:
         description: 'Container registry (e.g., ghcr.io)'
         required: true
@@ -154,18 +162,23 @@ jobs:
           KUBECONFIG: /tmp/kubeconfig
           IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
           REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          CONTAINER_NAME: ${{ inputs.container-name }}
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
           KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_OWNER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
-          IMAGE="${REGISTRY}/${REPO_OWNER}/gestpro-vocationaltest:${IMAGE_TAG}"
+          SOURCE_REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="${REGISTRY}/${REPO_OWNER}/${SOURCE_REPO}/${IMAGE_NAME}:${IMAGE_TAG}"
           
           echo "Updating deployment image..."
-          echo "   Image: $IMAGE"
+          echo "   Deployment : $KUBE_DEPLOYMENT"
+          echo "   Container  : $CONTAINER_NAME"
+          echo "   Image      : $IMAGE"
           
-          kubectl patch deployment/$KUBE_DEPLOYMENT \
-            -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"vocational-test-app\",\"image\":\"$IMAGE\"}]}}}}" \
+          kubectl set image deployment/$KUBE_DEPLOYMENT \
+            ${CONTAINER_NAME}=${IMAGE} \
             -n $KUBE_NAMESPACE
           
           echo "✓ Image updated"

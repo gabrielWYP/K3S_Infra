@@ -15,8 +15,20 @@ on:
         description: 'Kubernetes deployment name'
         required: true
         type: string
+      image-name:
+        description: 'Image name in GHCR (e.g., gestpro-vocationaltest)'
+        required: true
+        type: string
+      container-name:
+        description: 'Container name inside the K8s deployment spec'
+        required: true
+        type: string
       registry:
         description: 'Container registry (e.g., ghcr.io)'
+        required: true
+        type: string
+      port:
+        description: 'Port where the application is listening'
         required: true
         type: string
     secrets:
@@ -157,18 +169,22 @@ jobs:
           KUBECONFIG: /tmp/kubeconfig
           IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
           REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          CONTAINER_NAME: ${{ inputs.container-name }}
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
           KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_OWNER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
-          IMAGE="${REGISTRY}/${REPO_OWNER}/gestpro-vocationaltest:${IMAGE_TAG}"
+          IMAGE="${REGISTRY}/${REPO_OWNER}/${IMAGE_NAME}:${IMAGE_TAG}"
           
           echo "Updating deployment image..."
-          echo "   Image: $IMAGE"
+          echo "   Deployment : $KUBE_DEPLOYMENT"
+          echo "   Container  : $CONTAINER_NAME"
+          echo "   Image      : $IMAGE"
           
-          kubectl patch deployment/$KUBE_DEPLOYMENT \
-            -p "{\"spec\":{\"template\":{\"spec\":{\"containers\":[{\"name\":\"vocational-test-app\",\"image\":\"$IMAGE\"}]}}}}" \
+          kubectl set image deployment/$KUBE_DEPLOYMENT \
+            ${CONTAINER_NAME}=${IMAGE} \
             -n $KUBE_NAMESPACE
           
           echo "✓ Image updated"
@@ -227,13 +243,15 @@ jobs:
           
           echo "   Testing pod: $POD"
           
+          PORT="${{ inputs.port }}"
+          
           # Port forward in background
-          kubectl port-forward $POD 8000:8000 -n $KUBE_NAMESPACE > /dev/null 2>&1 &
+          kubectl port-forward $POD ${PORT}:${PORT} -n $KUBE_NAMESPACE > /dev/null 2>&1 &
           PF_PID=$!
           sleep 2
           
           # Health check
-          HEALTH=$(curl -s -m 5 http://localhost:8000/health 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null)
+          HEALTH=$(curl -s -m 5 http://localhost:${PORT}/health 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null)
           
           kill $PF_PID 2>/dev/null || true
           wait $PF_PID 2>/dev/null || true
