@@ -9,6 +9,6 @@ data:
   SENTIMENT_SERVICE_URL: "http://sentiment-model-service:8001"
   LOG_LEVEL: "INFO"
   ENVIRONMENT: "production"
-  APP_MODE: "default"
-  REPOSITORY: "gabrielwyp/sentiment_elections_dev"
+  APP_MODE: "PRODUCTION"
+  REPOSITORY: "ghcr.io"
 ---
