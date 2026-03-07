@@ -211,7 +211,7 @@ jobs:
           KUBECONFIG: /tmp/kubeconfig
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
           KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
-          port: ${{ inputs.port }}
+          PORT: ${{ inputs.port }}
         run: |
           echo "Running health checks..."
           
@@ -226,12 +226,12 @@ jobs:
           echo "   Testing pod: $POD"
           
           # Port forward in background
-          kubectl port-forward $POD $port:$port -n $KUBE_NAMESPACE > /dev/null 2>&1 &
+          kubectl port-forward $POD $PORT:$PORT -n $KUBE_NAMESPACE > /dev/null 2>&1 &
           PF_PID=$!
           sleep 2
           
           # Health check
-          HEALTH=$(curl -s -m 5 http://localhost:$port/health 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null)
+          HEALTH=$(curl -s -m 5 http://localhost:$PORT/health 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null)
           
           kill $PF_PID 2>/dev/null || true
           wait $PF_PID 2>/dev/null || true
