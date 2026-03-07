@@ -65,11 +65,10 @@ jobs:
     uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
     with:
       manifest-path: Sentiment_Analysis
-
+  
   deploy:
     name: Deploy to K3S
     runs-on: self-hosted
-    environment: sentiment-analysis
     needs: validate
     
     steps:
