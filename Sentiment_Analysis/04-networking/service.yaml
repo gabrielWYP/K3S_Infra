@@ -8,6 +8,7 @@ metadata:
 spec:
   selector:
     app: sentiment-analysis
+    component: web
   ports:
   - port: 8000
     targetPort: 8000
@@ -24,6 +25,7 @@ metadata:
 spec:
   selector:
     app: sentiment-analysis
+    component: model
   ports:
   - port: 8001
     targetPort: 8001

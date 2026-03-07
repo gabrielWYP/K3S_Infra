@@ -23,6 +23,10 @@ on:
         description: 'Container name inside the K8s deployment spec'
         required: true
         type: string
+      deployment-manifest:
+        description: 'Path to the deployment manifest (e.g., 03-workloads/backend-deployment.yaml)'
+        required: true
+        type: string
       registry:
         description: 'Container registry (e.g., ghcr.io)'
         required: true
@@ -131,11 +135,11 @@ jobs:
         env:
           KUBECONFIG: /tmp/kubeconfig
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
-          IMAGE_TAG: ${{ inputs.image-tag }}
-          REGISTRY: ${{ inputs.registry }}
+          DEPLOYMENT_MANIFEST: ${{ inputs.deployment-manifest }}
         run: |
           echo "Deploying Sentiment Analysis..."
           kubectl apply -k Sentiment_Analysis/ -n $KUBE_NAMESPACE
+          kubectl apply -f Sentiment_Analysis/$DEPLOYMENT_MANIFEST -n $KUBE_NAMESPACE
           echo "✓ Manifests applied"
 
       - name: Determine image tag

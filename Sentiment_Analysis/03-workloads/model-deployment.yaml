@@ -10,10 +10,12 @@ spec:
   selector:
     matchLabels:
       app: sentiment-analysis
+      component: model
   template:
     metadata:
       labels:
         app: sentiment-analysis
+        component: model
     spec:
       serviceAccountName: sentiment-analysis-sa
       containers:
