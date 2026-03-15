@@ -5,3 +5,4 @@ resources:
   - 01-PV/pv.yaml
   - 01-PV/storageclass.yaml
   - 02-config/namespace.yaml
+  - 03-serviceMonitor/serviceMonitor.yaml
