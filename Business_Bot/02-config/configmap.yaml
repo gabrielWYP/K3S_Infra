@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: business-bot-config
+  namespace: default
+data:
+  APP_NAME: "Business Bot"
+  ENVIRONMENT: "development"
+  LOG_LEVEL: "INFO"

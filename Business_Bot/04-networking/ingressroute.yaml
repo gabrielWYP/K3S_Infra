@@ -1,0 +1,14 @@
+apiVersion: traefik.containo.us/v1alpha1
+kind: IngressRoute
+metadata:
+  name: business-bot-ingress
+  namespace: default
+spec:
+  entryPoints:
+    - web
+  routes:
+  - match: Host(`business-bot.local`)
+    kind: Rule
+    services:
+    - name: business-bot-service
+      port: 80

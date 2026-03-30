@@ -1,0 +1,1 @@
+[[], ['pods', 'services', 'configmaps'], ['get', 'list', 'create', 'update', 'delete']]
