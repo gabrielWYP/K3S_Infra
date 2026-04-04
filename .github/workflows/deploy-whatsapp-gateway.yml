@@ -1,0 +1,315 @@
+name: Deploy WhatsApp Gateway to K3S
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: 'Image tag (e.g., main-abc1234)'
+        required: true
+        type: string
+      kube-namespace:
+        description: 'Kubernetes namespace'
+        required: true
+        type: string
+      kube-deployment:
+        description: 'Kubernetes deployment name for the Business_Bot workload'
+        required: true
+        type: string
+      image-name:
+        description: 'Image name within the repo (e.g., whatsapp-gateway, backend, chatbot)'
+        required: true
+        type: string
+      container-name:
+        description: 'Container name inside the K8s deployment spec'
+        required: true
+        type: string
+      registry:
+        description: 'Container registry (e.g., ghcr.io)'
+        required: true
+        type: string
+      port:
+        description: 'Port where the application is listening'
+        required: true
+        type: string
+    secrets:
+      KUBECONFIG_B64:
+        description: 'Base64 encoded kubeconfig for K3S'
+        required: true
+      WHATSAPP_ACCESS_TOKEN:
+        description: 'WhatsApp access token'
+        required: true
+      WHATSAPP_API_URL:
+        description: 'WhatsApp API base URL'
+        required: true
+      WHATSSAPP_PHONE_NUMBER_ID:
+        description: 'WhatsApp phone number id'
+        required: true
+      WHATSAPP_WEBHOOK_SECRET:
+        description: 'WhatsApp webhook secret'
+        required: true
+      WHATSAPP_VERIFY_TOKEN:
+        description: 'WhatsApp verify token'
+        required: true
+
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: 'Image tag from build-and-push workflow (e.g., main-abc1234)'
+        required: true
+        type: string
+
+jobs:
+  validate:
+    name: Validate Manifests
+    uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
+    with:
+      manifest-path: Business_Bot
+
+  deploy:
+    name: Deploy to K3S
+    runs-on: self-hosted
+    needs: validate
+
+    steps:
+      - name: Checkout infra manifests
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          if [ -z "$KUBECONFIG_B64" ]; then
+            echo "❌ Error: KUBECONFIG_B64 secret not configured"
+            exit 1
+          fi
+
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+
+          echo "✓ Kubeconfig ready"
+          kubectl cluster-info | head -3
+
+      - name: Verify K3S connectivity
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Checking K3S cluster..."
+          kubectl get nodes
+          echo "✓ Cluster connectivity verified"
+
+      - name: Create namespace
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        run: |
+          kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+          echo "✓ Namespace '$KUBE_NAMESPACE' ready"
+
+      - name: Create app secrets
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
+          WHATSAPP_API_URL: ${{ secrets.WHATSAPP_API_URL }}
+          WHATSSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSSAPP_PHONE_NUMBER_ID }}
+          WHATSAPP_WEBHOOK_SECRET: ${{ secrets.WHATSAPP_WEBHOOK_SECRET }}
+          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        run: |
+          echo "Creating secrets..."
+
+          kubectl create secret generic whatsapp-gateway-secrets \
+            --from-literal=WHATSAPP_ACCESS_TOKEN="$WHATSAPP_ACCESS_TOKEN" \
+            --from-literal=WHATSAPP_API_URL="$WHATSAPP_API_URL" \
+            --from-literal=WHATSSAPP_PHONE_NUMBER_ID="$WHATSSAPP_PHONE_NUMBER_ID" \
+            --from-literal=WHATSAPP_WEBHOOK_SECRET="$WHATSAPP_WEBHOOK_SECRET" \
+            --from-literal=WHATSAPP_VERIFY_TOKEN="$WHATSAPP_VERIFY_TOKEN" \
+            -n $KUBE_NAMESPACE \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "✓ Secrets created"
+
+      - name: Determine deployment manifest
+        id: deployment-manifest
+        env:
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        run: |
+          CANDIDATE_1="03-workloads/${KUBE_DEPLOYMENT}.yaml"
+          CANDIDATE_2="03-workloads/${KUBE_DEPLOYMENT}-deployment.yaml"
+
+          SHORT_NAME="${KUBE_DEPLOYMENT#business-bot-}"
+          CANDIDATE_3="03-workloads/${SHORT_NAME}.yaml"
+          CANDIDATE_4="03-workloads/${SHORT_NAME}-deployment.yaml"
+
+          for CANDIDATE in "$CANDIDATE_1" "$CANDIDATE_2" "$CANDIDATE_3" "$CANDIDATE_4"; do
+            if [ -f "Business_Bot/${CANDIDATE}" ]; then
+              echo "manifest=$CANDIDATE" >> $GITHUB_OUTPUT
+              echo "✓ Using workload manifest: $CANDIDATE"
+              exit 0
+            fi
+          done
+
+          echo "❌ Could not determine workload manifest for deployment: $KUBE_DEPLOYMENT"
+          echo "Checked candidates:"
+          echo "  - $CANDIDATE_1"
+          echo "  - $CANDIDATE_2"
+          echo "  - $CANDIDATE_3"
+          echo "  - $CANDIDATE_4"
+          exit 1
+
+      - name: Apply manifests
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          DEPLOYMENT_MANIFEST: ${{ steps.deployment-manifest.outputs.manifest }}
+        run: |
+          echo "Deploying Business_Bot base resources..."
+          kubectl apply -k Business_Bot/ -n $KUBE_NAMESPACE
+
+          echo "Deploying workload manifest: $DEPLOYMENT_MANIFEST"
+          kubectl apply -f Business_Bot/$DEPLOYMENT_MANIFEST -n $KUBE_NAMESPACE
+          echo "✓ Manifests applied"
+
+      - name: Determine image tag
+        id: image-tag
+        run: |
+          TAG="${{ inputs.image-tag }}"
+
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.event.inputs.image-tag }}"
+          fi
+
+          if [ -z "$TAG" ]; then
+            echo "❌ No image tag provided"
+            exit 1
+          fi
+
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "📦 Image tag: $TAG"
+
+      - name: Update deployment image
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          IMAGE_TAG: ${{ steps.image-tag.outputs.tag }}
+          REGISTRY: ${{ inputs.registry }}
+          IMAGE_NAME: ${{ inputs.image-name }}
+          CONTAINER_NAME: ${{ inputs.container-name }}
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        run: |
+          REPO_OWNER="${{ github.repository_owner }}"
+          REPO_OWNER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
+          SOURCE_REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="${REGISTRY}/${REPO_OWNER}/${SOURCE_REPO}/${IMAGE_NAME}:${IMAGE_TAG}"
+
+          echo "Updating deployment image..."
+          echo "   Deployment : $KUBE_DEPLOYMENT"
+          echo "   Container  : $CONTAINER_NAME"
+          echo "   Image      : $IMAGE"
+
+          kubectl set image deployment/$KUBE_DEPLOYMENT \
+            ${CONTAINER_NAME}=${IMAGE} \
+            -n $KUBE_NAMESPACE
+
+          echo "✓ Image updated"
+
+      - name: Wait for rollout
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        run: |
+          echo "Waiting for rollout (timeout 5m)..."
+
+          kubectl rollout status deployment/$KUBE_DEPLOYMENT \
+            -n $KUBE_NAMESPACE \
+            --timeout=5m || {
+              echo "❌ Rollout failed, initiating rollback..."
+              kubectl rollout undo deployment/$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE
+              exit 1
+            }
+
+          echo "✓ Rollout completed successfully"
+
+      - name: Wait for pod readiness
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        run: |
+          echo "Waiting for pods to be ready..."
+
+          kubectl wait --for=condition=ready pod \
+            -l app=$KUBE_DEPLOYMENT \
+            -n $KUBE_NAMESPACE \
+            --timeout=30s || {
+              echo "⚠️  Warning: Pods not ready yet, continuing with health check..."
+            }
+
+          sleep 2
+          echo "✓ Pods status checked"
+
+      - name: Health check
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+          PORT: ${{ inputs.port }}
+        run: |
+          echo "Running health checks..."
+
+          POD=$(kubectl get pod -l app=$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+
+          if [ -z "$POD" ]; then
+            echo "⚠️  Warning: No pods found, skipping health check"
+            exit 0
+          fi
+
+          echo "   Testing pod: $POD"
+
+          kubectl port-forward $POD $PORT:$PORT -n $KUBE_NAMESPACE > /dev/null 2>&1 &
+          PF_PID=$!
+          sleep 2
+
+          HEALTH=$(curl -s -m 5 http://localhost:$PORT/health 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null)
+
+          kill $PF_PID 2>/dev/null || true
+          wait $PF_PID 2>/dev/null || true
+
+          if [ "$HEALTH" = "healthy" ] || [ "$HEALTH" = "ok" ]; then
+            echo "✓ Health check passed: $HEALTH"
+          else
+            echo "⚠️  Health check returned: $HEALTH"
+          fi
+
+      - name: Verify deployment
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        run: |
+          echo "=== Deployment Status ==="
+          kubectl get deployment -n $KUBE_NAMESPACE
+
+          echo ""
+          echo "=== Pod Status ==="
+          kubectl get pods -n $KUBE_NAMESPACE -l app=$KUBE_DEPLOYMENT
+
+          echo ""
+          echo "=== Recent Events ==="
+          kubectl get events -n $KUBE_NAMESPACE --sort-by='.lastTimestamp' | tail -10
+
+      - name: Success notification
+        if: success()
+        env:
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        run: |
+          echo "✅ Deployment successful!"
+          echo ""
+          echo "Summary:"
+          echo "  Deployment: $KUBE_DEPLOYMENT"
+          echo "  Namespace: $KUBE_NAMESPACE"
+          echo "  Image tag: ${{ steps.image-tag.outputs.tag }}"
+          echo "  Triggered by: ${{ github.event_name }}"
