@@ -19,5 +19,5 @@ patchesStrategicMerge:
 
 images:
   - name: ghcr.io/gabrielwyp/business-bot-microservice
-    newName: ghcr.io/gabrielwyp/businessbot--whatsapp-gateway
+    newName: ghcr.io/gabrielwyp/businessbot-whatsapp-gateway
     newTag: latest
