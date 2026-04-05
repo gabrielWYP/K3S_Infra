@@ -1,9 +1,32 @@
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: business-bot-config
-  namespace: default
+  namespace: business-bot
+  labels:
+    app: business-bot
+    component: config
 data:
+  # Project Configuration
   APP_NAME: "Business Bot"
-  ENVIRONMENT: "development"
+  PROJECT_NAME: "business-bot"
+  ENVIRONMENT: "production"
   LOG_LEVEL: "INFO"
+  APP_MODE: "PRODUCTION"
+  
+  # Infrastructure Configuration
+  REPOSITORY: "ghcr.io"
+  NAMESPACE: "business-bot"
+  
+  # Service Discovery - Internal URLs
+  WHATSAPP_GATEWAY_URL: "http://whatsapp-gateway-service:80"
+  CHATBOT_URL: "http://chatbot-service:80"
+  BACKEND_URL: "http://backend-service:80"
+  
+  # Default Service Configuration
+  DEFAULT_TIMEOUT: "30"
+  MAX_RETRIES: "3"
+  RATE_LIMIT_REQUESTS: "100"
+  RATE_LIMIT_WINDOW: "60"
+---

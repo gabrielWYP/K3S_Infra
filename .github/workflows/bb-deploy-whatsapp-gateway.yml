@@ -1,0 +1,204 @@
+name: BB - Deploy WhatsApp Gateway
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: 'Image tag to deploy'
+        required: true
+        type: string
+      kube-namespace:
+        description: 'Kubernetes namespace'
+        default: 'business-bot'
+        required: false
+        type: string
+    secrets:
+      KUBECONFIG_B64:
+        description: 'Base64 encoded kubeconfig for K3S'
+        required: true
+      GROQ_API_KEY:
+        description: 'GROQ API key for AI features'
+        required: false
+      DATABASE_URL:
+        description: 'Database connection URL'
+        required: false
+      REDIS_URL:
+        description: 'Redis connection URL'
+        required: false
+      BUSINESS_BOT_GLOBAL_SECRET_KEY:
+        description: 'Global secret key for Business Bot'
+        required: false
+      # WhatsApp specific secrets
+      WHATSAPP_ACCESS_TOKEN:
+        description: 'WhatsApp API access token'
+        required: true
+      WHATSAPP_API_URL:
+        description: 'WhatsApp API URL'
+        required: true
+      WHATSAPP_PHONE_NUMBER_ID:
+        description: 'WhatsApp phone number ID'
+        required: true
+      WHATSAPP_WEBHOOK_SECRET:
+        description: 'WhatsApp webhook secret'
+        required: true
+      WHATSAPP_VERIFY_TOKEN:
+        description: 'WhatsApp webhook verify token'
+        required: true
+
+env:
+  MICROSERVICE_NAME: whatsapp-gateway
+  MANIFEST_PATH: Business_Bot/03-workloads/overlays/whatsapp-gateway
+  IMAGE_NAME: businessbot--whatsapp-gateway
+  CONTAINER_NAME: whatsapp-gateway-container
+  KUBE_DEPLOYMENT: whatsapp-gateway-microservice-base
+  PORT: '3000'
+
+jobs:
+  validate:
+    name: Validate Manifests
+    uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
+    with:
+      manifest-path: Business_Bot
+
+  pre-deploy-checks:
+    name: Pre-deploy Checks
+    runs-on: self-hosted
+    needs: validate
+    steps:
+      - name: Checkout K3S_Infra
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          
+          echo "Pre-deploy checks for WhatsApp Gateway..."
+          
+          kubectl get namespace ${{ inputs.kube-namespace }} || {
+            echo "Namespace does not exist, will be created during deploy"
+          }
+          
+          kubectl get deployment ${{ env.KUBE_DEPLOYMENT }} -n ${{ inputs.kube-namespace }} 2>/dev/null || {
+            echo "No existing deployment found, fresh deploy"
+          }
+
+  deploy-core:
+    name: Deploy Core
+    runs-on: self-hosted
+    needs: [validate, pre-deploy-checks]
+    steps:
+      - name: Checkout K3S_Infra
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Prepare WhatsApp secrets JSON
+        id: secrets-json
+        run: |
+          echo "Preparing WhatsApp secrets JSON..."
+          
+          SECRETS_JSON=$(jq -n \
+            --arg wa_token "${{ secrets.WHATSAPP_ACCESS_TOKEN }}" \
+            --arg wa_api_url "${{ secrets.WHATSAPP_API_URL }}" \
+            --arg wa_phone_id "${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}" \
+            --arg wa_webhook_secret "${{ secrets.WHATSAPP_WEBHOOK_SECRET }}" \
+            --arg wa_verify_token "${{ secrets.WHATSAPP_VERIFY_TOKEN }}" \
+            '{
+              WHATSAPP_ACCESS_TOKEN: $wa_token,
+              WHATSAPP_API_URL: $wa_api_url,
+              WHATSAPP_PHONE_NUMBER_ID: $wa_phone_id,
+              WHATSAPP_WEBHOOK_SECRET: $wa_webhook_secret,
+              WHATSAPP_VERIFY_TOKEN: $wa_verify_token
+            }')
+          
+          echo "json=$SECRETS_JSON" >> $GITHUB_OUTPUT
+          echo "Secrets JSON prepared (values hidden for security)"
+
+      - name: Deploy to K3S
+        uses: ./.github/actions/bb-deploy-core/
+        with:
+          microservice-name: ${{ env.MICROSERVICE_NAME }}
+          image-tag: ${{ inputs.image-tag }}
+          kube-namespace: ${{ inputs.kube-namespace }}
+          manifest-path: ${{ env.MANIFEST_PATH }}
+          image-name: ${{ env.IMAGE_NAME }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          kube-deployment: ${{ env.KUBE_DEPLOYMENT }}
+          port: ${{ env.PORT }}
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          BUSINESS_BOT_GLOBAL_SECRET_KEY: ${{ secrets.BUSINESS_BOT_GLOBAL_SECRET_KEY }}
+          MICROSERVICE_SECRETS_JSON: ${{ steps.secrets-json.outputs.json }}
+
+  post-deploy-verification:
+    name: Post-deploy Verification
+    runs-on: self-hosted
+    needs: deploy-core
+    steps:
+      - name: Checkout K3S_Infra
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+
+      - name: Verify IngressRoute
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Verifying WhatsApp webhook IngressRoute..."
+          
+          INGRESS=$(kubectl get ingressroute -n ${{ inputs.kube-namespace }} | grep ${{ env.MICROSERVICE_NAME }} || true)
+          if [ -n "$INGRESS" ]; then
+            echo "IngressRoute found:"
+            echo "$INGRESS"
+          else
+            echo "Warning: IngressRoute not found, webhook may not be accessible"
+          fi
+
+      - name: Test webhook endpoint (optional)
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Note: Webhook endpoint testing requires external access"
+          echo "Verify manually that webhook is accessible at your configured URL"
+          
+          kubectl get svc -n ${{ inputs.kube-namespace }} | grep ${{ env.MICROSERVICE_NAME }}
+
+  notify-success:
+    name: Notify Success
+    runs-on: self-hosted
+    needs: post-deploy-verification
+    if: success()
+    steps:
+      - name: Deployment summary
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "  WhatsApp Gateway Deployment Complete"
+          echo "=========================================="
+          echo "  Microservice: ${{ env.MICROSERVICE_NAME }}"
+          echo "  Image Tag: ${{ inputs.image-tag }}"
+          echo "  Namespace: ${{ inputs.kube-namespace }}"
+          echo "  Port: ${{ env.PORT }}"
+          echo ""
+          echo "  Next Steps:"
+          echo "    1. Verify webhook URL is accessible"
+          echo "    2. Test message receiving/sending"
+          echo "    3. Check logs: kubectl logs -n ${{ inputs.kube-namespace }} -l app=${{ env.KUBE_DEPLOYMENT }}"
+          echo "=========================================="

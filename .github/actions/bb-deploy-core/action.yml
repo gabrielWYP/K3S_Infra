@@ -1,0 +1,258 @@
+name: BB Deploy Core
+description: |
+  Core deployment logic for all Business Bot microservices.
+  This composite action handles the K3S deployment operations
+  including kubeconfig setup, secrets management, manifest application,
+  image updates, and health checks.
+
+inputs:
+  microservice-name:
+    description: 'Name of the microservice (e.g., whatsapp-gateway, chatbot, backend)'
+    required: true
+  image-tag:
+    description: 'Image tag to deploy (e.g., main-abc1234)'
+    required: true
+  kube-namespace:
+    description: 'Kubernetes namespace'
+    default: 'business-bot'
+    required: false
+  manifest-path:
+    description: 'Path to kustomize overlay (e.g., Business_Bot/03-workloads/overlays/whatsapp-gateway)'
+    required: true
+  registry:
+    description: 'Container registry'
+    default: 'ghcr.io'
+    required: false
+  image-name:
+    description: 'Image name in registry (e.g., businessbot--whatsapp-gateway)'
+    required: true
+  container-name:
+    description: 'Container name in deployment'
+    default: 'app'
+    required: false
+  kube-deployment:
+    description: 'Kubernetes deployment name'
+    required: true
+  port:
+    description: 'Application port for health check'
+    required: true
+  health-check-path:
+    description: 'Health check endpoint path'
+    default: '/health'
+    required: false
+  skip-health-check:
+    description: 'Skip health check if true'
+    default: 'false'
+    required: false
+
+runs:
+  using: composite
+  steps:
+    - name: Checkout infra manifests
+      uses: actions/checkout@v4
+      with:
+        repository: gabrielwyp/K3S_Infra
+
+    - name: Setup kubeconfig
+      shell: bash
+      env:
+        KUBECONFIG_B64: ${{ env.KUBECONFIG_B64 }}
+      run: |
+        if [ -z "$KUBECONFIG_B64" ]; then
+          echo "Error: KUBECONFIG_B64 secret not configured"
+          exit 1
+        fi
+        
+        echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+        chmod 600 /tmp/kubeconfig
+        export KUBECONFIG=/tmp/kubeconfig
+        
+        echo "Kubeconfig ready"
+        kubectl cluster-info | head -3
+
+    - name: Create namespace
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+      run: |
+        kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
+        echo "Namespace '$KUBE_NAMESPACE' ready"
+
+    - name: Create global Business Bot secrets
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        GROQ_API_KEY: ${{ env.GROQ_API_KEY }}
+        DATABASE_URL: ${{ env.DATABASE_URL }}
+        REDIS_URL: ${{ env.REDIS_URL }}
+        BUSINESS_BOT_GLOBAL_SECRET_KEY: ${{ env.BUSINESS_BOT_GLOBAL_SECRET_KEY }}
+      run: |
+        echo "Creating global Business Bot secrets..."
+        
+        kubectl create secret generic business-bot-global-secrets \
+          --from-literal=GROQ_API_KEY="${GROQ_API_KEY:-}" \
+          --from-literal=DATABASE_URL="${DATABASE_URL:-}" \
+          --from-literal=REDIS_URL="${REDIS_URL:-}" \
+          --from-literal=SECRET_KEY="${BUSINESS_BOT_GLOBAL_SECRET_KEY:-}" \
+          -n $KUBE_NAMESPACE \
+          --dry-run=client -o yaml | kubectl apply -f -
+        
+        echo "Global secrets created"
+
+    - name: Create microservice-specific secrets
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        MICROSERVICE_NAME: ${{ inputs.microservice-name }}
+        SECRETS_JSON: ${{ env.MICROSERVICE_SECRETS_JSON }}
+      run: |
+        echo "Creating microservice-specific secrets for $MICROSERVICE_NAME..."
+        
+        if [ -n "$SECRETS_JSON" ] && [ "$SECRETS_JSON" != "null" ] && [ "$SECRETS_JSON" != "" ]; then
+          echo "Creating secrets from JSON..."
+          kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
+            $(echo "$SECRETS_JSON" | jq -r 'to_entries[] | "--from-literal=\(.key)=\(.value)"') \
+            -n $KUBE_NAMESPACE \
+            --dry-run=client -o yaml | kubectl apply -f -
+          echo "Secrets created from JSON"
+        else
+          echo "No secrets JSON provided, creating empty secret placeholder"
+          kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
+            --from-literal=PLACEHOLDER="true" \
+            -n $KUBE_NAMESPACE \
+            --dry-run=client -o yaml | kubectl apply -f -
+          echo "Empty secret placeholder created"
+        fi
+
+    - name: Apply manifests with kustomize
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        MANIFEST_PATH: ${{ inputs.manifest-path }}
+      run: |
+        echo "Applying manifests from $MANIFEST_PATH..."
+        kubectl apply -k $MANIFEST_PATH -n $KUBE_NAMESPACE
+        echo "Manifests applied successfully"
+
+    - name: Update deployment image
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        IMAGE_TAG: ${{ inputs.image-tag }}
+        REGISTRY: ${{ inputs.registry }}
+        IMAGE_NAME: ${{ inputs.image-name }}
+        CONTAINER_NAME: ${{ inputs.container-name }}
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        REPO_OWNER: ${{ github.repository_owner }}
+      run: |
+        REPO_OWNER_LOWER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
+        IMAGE="${REGISTRY}/${REPO_OWNER_LOWER}/${IMAGE_NAME}:${IMAGE_TAG}"
+        
+        echo "Updating deployment image..."
+        echo "   Deployment : $KUBE_DEPLOYMENT"
+        echo "   Container  : $CONTAINER_NAME"
+        echo "   Image      : $IMAGE"
+        
+        kubectl set image deployment/$KUBE_DEPLOYMENT \
+          ${CONTAINER_NAME}=${IMAGE} \
+          -n $KUBE_NAMESPACE
+        
+        echo "Image updated successfully"
+
+    - name: Wait for rollout
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+      run: |
+        echo "Waiting for rollout (timeout 5m)..."
+        
+        kubectl rollout status deployment/$KUBE_DEPLOYMENT \
+          -n $KUBE_NAMESPACE \
+          --timeout=5m || {
+            echo "Rollout failed, initiating rollback..."
+            kubectl rollout undo deployment/$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE
+            exit 1
+          }
+        
+        echo "Rollout completed successfully"
+
+    - name: Wait for pod readiness
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+      run: |
+        echo "Waiting for pods to be ready..."
+        
+        kubectl wait --for=condition=ready pod \
+          -l app=$KUBE_DEPLOYMENT \
+          -n $KUBE_NAMESPACE \
+          --timeout=30s || {
+            echo "Warning: Pods not ready yet, continuing with health check..."
+          }
+        
+        sleep 2
+        echo "Pod readiness check completed"
+
+    - name: Health check
+      if: inputs.skip-health-check != 'true'
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+        PORT: ${{ inputs.port }}
+        HEALTH_PATH: ${{ inputs.health-check-path }}
+      run: |
+        echo "Running health checks..."
+        
+        POD=$(kubectl get pod -l app=$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
+        
+        if [ -z "$POD" ]; then
+          echo "Warning: No pods found, skipping health check"
+          exit 0
+        fi
+        
+        echo "Testing pod: $POD"
+        
+        kubectl port-forward $POD ${PORT}:${PORT} -n $KUBE_NAMESPACE > /dev/null 2>&1 &
+        PF_PID=$!
+        sleep 2
+        
+        HEALTH=$(curl -s -m 5 http://localhost:${PORT}${HEALTH_PATH} 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null || echo "unavailable")
+        
+        kill $PF_PID 2>/dev/null || true
+        wait $PF_PID 2>/dev/null || true
+        
+        if [ "$HEALTH" = "healthy" ] || [ "$HEALTH" = "ok" ]; then
+          echo "Health check passed: $HEALTH"
+        else
+          echo "Health check returned: $HEALTH"
+        fi
+
+    - name: Verify deployment
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
+      run: |
+        echo ""
+        echo "=== Deployment Status ==="
+        kubectl get deployment -n $KUBE_NAMESPACE
+        
+        echo ""
+        echo "=== Pod Status ==="
+        kubectl get pods -n $KUBE_NAMESPACE -l app=$KUBE_DEPLOYMENT
+        
+        echo ""
+        echo "=== Recent Events ==="
+        kubectl get events -n $KUBE_NAMESPACE --sort-by='.lastTimestamp' | tail -10

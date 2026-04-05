@@ -1,4 +1,5 @@
-name: Deploy WhatsApp Gateway to K3S
+name: Deploy Business Bot Microservice
+
 on:
   workflow_call:
     inputs:
@@ -6,16 +7,20 @@ on:
         description: 'Image tag (e.g., main-abc1234)'
         required: true
         type: string
+      microservice-name:
+        description: 'Microservice name (e.g., whatsapp-gateway, chatbot, backend)'
+        required: true
+        type: string
       kube-namespace:
         description: 'Kubernetes namespace'
         required: true
         type: string
       kube-deployment:
-        description: 'Kubernetes deployment name for the Business_Bot workload'
+        description: 'Kubernetes deployment name'
         required: true
         type: string
       image-name:
-        description: 'Image name within the repo (e.g., whatsapp-gateway, backend, chatbot)'
+        description: 'Image name in GHCR (e.g., businessbot--whatsapp-gateway)'
         required: true
         type: string
       container-name:
@@ -30,31 +35,48 @@ on:
         description: 'Port where the application is listening'
         required: true
         type: string
+      manifest-path:
+        description: 'Path to kustomize overlay (e.g., Business_Bot/03-workloads/overlays/whatsapp-gateway)'
+        required: true
+        type: string
     secrets:
       KUBECONFIG_B64:
         description: 'Base64 encoded kubeconfig for K3S'
         required: true
-      WHATSAPP_ACCESS_TOKEN:
-        description: 'WhatsApp access token'
-        required: true
-      WHATSAPP_API_URL:
-        description: 'WhatsApp API base URL'
-        required: true
-      WHATSSAPP_PHONE_NUMBER_ID:
-        description: 'WhatsApp phone number id'
-        required: true
-      WHATSAPP_WEBHOOK_SECRET:
-        description: 'WhatsApp webhook secret'
-        required: true
-      WHATSAPP_VERIFY_TOKEN:
-        description: 'WhatsApp verify token'
-        required: true
+      # Global Business Bot Secrets
+      GROQ_API_KEY:
+        description: 'GROQ API key for AI features'
+        required: false
+      DATABASE_URL:
+        description: 'Database connection URL'
+        required: false
+      REDIS_URL:
+        description: 'Redis connection URL'
+        required: false
+      BUSINESS_BOT_GLOBAL_SECRET_KEY:
+        description: 'Global secret key for Business Bot'
+        required: false
+      # Microservice-specific secrets (passed dynamically based on microservice-name)
+      # These are placeholders - actual secrets are configured per microservice environment
 
   workflow_dispatch:
     inputs:
       image-tag:
-        description: 'Image tag from Whatsapp-Gateway (e.g., main-abc1234)'
+        description: 'Image tag from BusinessBot repository (e.g., main-abc1234)'
         required: true
+        type: string
+      microservice-name:
+        description: 'Microservice to deploy (e.g., whatsapp-gateway, chatbot, backend)'
+        required: true
+        type: choice
+        options:
+          - whatsapp-gateway
+          - chatbot
+          - backend
+      kube-namespace:
+        description: 'Kubernetes namespace'
+        required: true
+        default: 'business-bot'
         type: string
 
 jobs:
@@ -62,13 +84,14 @@ jobs:
     name: Validate Manifests
     uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
     with:
-      manifest-path: Business_Bot
+      manifest-path: ${{ inputs.manifest-path }}
 
   deploy:
     name: Deploy to K3S
     runs-on: self-hosted
+    environment: ${{ inputs.microservice-name }}
     needs: validate
-
+    
     steps:
       - name: Checkout infra manifests
         uses: actions/checkout@v4
@@ -80,15 +103,15 @@ jobs:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
         run: |
           if [ -z "$KUBECONFIG_B64" ]; then
-            echo "❌ Error: KUBECONFIG_B64 secret not configured"
+            echo "Error: KUBECONFIG_B64 secret not configured"
             exit 1
           fi
-
+          
           echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
           chmod 600 /tmp/kubeconfig
           export KUBECONFIG=/tmp/kubeconfig
-
-          echo "✓ Kubeconfig ready"
+          
+          echo "Kubeconfig ready"
           kubectl cluster-info | head -3
 
       - name: Verify K3S connectivity
@@ -97,7 +120,7 @@ jobs:
         run: |
           echo "Checking K3S cluster..."
           kubectl get nodes
-          echo "✓ Cluster connectivity verified"
+          echo "Cluster connectivity verified"
 
       - name: Create namespace
         env:
@@ -105,88 +128,73 @@ jobs:
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
         run: |
           kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
-          echo "✓ Namespace '$KUBE_NAMESPACE' ready"
+          echo "Namespace '$KUBE_NAMESPACE' ready"
 
-      - name: Create app secrets
+      - name: Create global Business Bot secrets
         env:
           KUBECONFIG: /tmp/kubeconfig
-          WHATSAPP_ACCESS_TOKEN: ${{ secrets.WHATSAPP_ACCESS_TOKEN }}
-          WHATSAPP_API_URL: ${{ secrets.WHATSAPP_API_URL }}
-          WHATSSAPP_PHONE_NUMBER_ID: ${{ secrets.WHATSSAPP_PHONE_NUMBER_ID }}
-          WHATSAPP_WEBHOOK_SECRET: ${{ secrets.WHATSAPP_WEBHOOK_SECRET }}
-          WHATSAPP_VERIFY_TOKEN: ${{ secrets.WHATSAPP_VERIFY_TOKEN }}
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          MICROSERVICE_NAME: ${{ inputs.microservice-name }}
         run: |
-          echo "Creating secrets..."
-
-          kubectl create secret generic whatsapp-gateway-secrets \
-            --from-literal=WHATSAPP_ACCESS_TOKEN="$WHATSAPP_ACCESS_TOKEN" \
-            --from-literal=WHATSAPP_API_URL="$WHATSAPP_API_URL" \
-            --from-literal=WHATSSAPP_PHONE_NUMBER_ID="$WHATSSAPP_PHONE_NUMBER_ID" \
-            --from-literal=WHATSAPP_WEBHOOK_SECRET="$WHATSAPP_WEBHOOK_SECRET" \
-            --from-literal=WHATSAPP_VERIFY_TOKEN="$WHATSAPP_VERIFY_TOKEN" \
+          echo "Creating global Business Bot secrets..."
+          
+          # Global secrets for all microservices
+          kubectl create secret generic business-bot-global-secrets \
+            --from-literal=GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}" \
+            --from-literal=DATABASE_URL="${{ secrets.DATABASE_URL }}" \
+            --from-literal=REDIS_URL="${{ secrets.REDIS_URL }}" \
+            --from-literal=SECRET_KEY="${{ secrets.BUSINESS_BOT_GLOBAL_SECRET_KEY }}" \
             -n $KUBE_NAMESPACE \
             --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "Global secrets created"
 
-          echo "✓ Secrets created"
-
-      - name: Determine deployment manifest
-        id: deployment-manifest
-        env:
-          KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
-        run: |
-          CANDIDATE_1="03-workloads/${KUBE_DEPLOYMENT}.yaml"
-          CANDIDATE_2="03-workloads/${KUBE_DEPLOYMENT}-deployment.yaml"
-
-          SHORT_NAME="${KUBE_DEPLOYMENT#business-bot-}"
-          CANDIDATE_3="03-workloads/${SHORT_NAME}.yaml"
-          CANDIDATE_4="03-workloads/${SHORT_NAME}-deployment.yaml"
-
-          for CANDIDATE in "$CANDIDATE_1" "$CANDIDATE_2" "$CANDIDATE_3" "$CANDIDATE_4"; do
-            if [ -f "Business_Bot/${CANDIDATE}" ]; then
-              echo "manifest=$CANDIDATE" >> $GITHUB_OUTPUT
-              echo "✓ Using workload manifest: $CANDIDATE"
-              exit 0
-            fi
-          done
-
-          echo "❌ Could not determine workload manifest for deployment: $KUBE_DEPLOYMENT"
-          echo "Checked candidates:"
-          echo "  - $CANDIDATE_1"
-          echo "  - $CANDIDATE_2"
-          echo "  - $CANDIDATE_3"
-          echo "  - $CANDIDATE_4"
-          exit 1
-
-      - name: Apply manifests
+      - name: Create microservice-specific secrets
         env:
           KUBECONFIG: /tmp/kubeconfig
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
-          DEPLOYMENT_MANIFEST: ${{ steps.deployment-manifest.outputs.manifest }}
+          MICROSERVICE_NAME: ${{ inputs.microservice-name }}
         run: |
-          echo "Deploying Business_Bot base resources..."
-          kubectl apply -k Business_Bot/ -n $KUBE_NAMESPACE
+          echo "Creating microservice-specific secrets for $MICROSERVICE_NAME..."
+          
+          # Convert microservice name to secret name format (replace - with _)
+          SECRET_NAME="${MICROSERVICE_NAME//-/_}_SECRETS_B64"
+          
+          # Create microservice-specific secret (empty if no secrets defined)
+          # Secrets are expected to be passed from the calling workflow environment
+          kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
+            --from-literal=PLACEHOLDER="true" \
+            -n $KUBE_NAMESPACE \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          echo "Microservice-specific secrets created"
 
-          echo "Deploying workload manifest: $DEPLOYMENT_MANIFEST"
-          kubectl apply -f Business_Bot/$DEPLOYMENT_MANIFEST -n $KUBE_NAMESPACE
-          echo "✓ Manifests applied"
+      - name: Apply manifests with kustomize
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+          KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+          MANIFEST_PATH: ${{ inputs.manifest-path }}
+        run: |
+          echo "Applying Business Bot manifests from $MANIFEST_PATH..."
+          kubectl apply -k $MANIFEST_PATH -n $KUBE_NAMESPACE
+          echo "Manifests applied successfully"
 
       - name: Determine image tag
         id: image-tag
         run: |
           TAG="${{ inputs.image-tag }}"
-
+          
           if [ -z "$TAG" ]; then
             TAG="${{ github.event.inputs.image-tag }}"
           fi
-
+          
           if [ -z "$TAG" ]; then
-            echo "❌ No image tag provided"
+            echo "Error: No image tag provided"
             exit 1
           fi
-
+          
           echo "tag=$TAG" >> $GITHUB_OUTPUT
-          echo "📦 Image tag: $TAG"
+          echo "Image tag: $TAG"
 
       - name: Update deployment image
         env:
@@ -200,19 +208,18 @@ jobs:
         run: |
           REPO_OWNER="${{ github.repository_owner }}"
           REPO_OWNER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
-          SOURCE_REPO=$(echo "${{ github.event.repository.name }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE="${REGISTRY}/${REPO_OWNER}/${SOURCE_REPO}/${IMAGE_NAME}:${IMAGE_TAG}"
-
+          IMAGE="${REGISTRY}/${REPO_OWNER}/${IMAGE_NAME}:${IMAGE_TAG}"
+          
           echo "Updating deployment image..."
           echo "   Deployment : $KUBE_DEPLOYMENT"
           echo "   Container  : $CONTAINER_NAME"
           echo "   Image      : $IMAGE"
-
+          
           kubectl set image deployment/$KUBE_DEPLOYMENT \
             ${CONTAINER_NAME}=${IMAGE} \
             -n $KUBE_NAMESPACE
-
-          echo "✓ Image updated"
+          
+          echo "Image updated"
 
       - name: Wait for rollout
         env:
@@ -221,16 +228,16 @@ jobs:
           KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           echo "Waiting for rollout (timeout 5m)..."
-
+          
           kubectl rollout status deployment/$KUBE_DEPLOYMENT \
             -n $KUBE_NAMESPACE \
             --timeout=5m || {
-              echo "❌ Rollout failed, initiating rollback..."
+              echo "Rollout failed, initiating rollback..."
               kubectl rollout undo deployment/$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE
               exit 1
             }
-
-          echo "✓ Rollout completed successfully"
+          
+          echo "Rollout completed successfully"
 
       - name: Wait for pod readiness
         env:
@@ -239,48 +246,49 @@ jobs:
           KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
           echo "Waiting for pods to be ready..."
-
+          
           kubectl wait --for=condition=ready pod \
             -l app=$KUBE_DEPLOYMENT \
             -n $KUBE_NAMESPACE \
             --timeout=30s || {
-              echo "⚠️  Warning: Pods not ready yet, continuing with health check..."
+              echo "Warning: Pods not ready yet, continuing with health check..."
             }
-
+          
           sleep 2
-          echo "✓ Pods status checked"
+          echo "Pods status checked"
 
       - name: Health check
         env:
           KUBECONFIG: /tmp/kubeconfig
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
           KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
-          PORT: ${{ inputs.port }}
         run: |
           echo "Running health checks..."
-
+          
           POD=$(kubectl get pod -l app=$KUBE_DEPLOYMENT -n $KUBE_NAMESPACE -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)
-
+          
           if [ -z "$POD" ]; then
-            echo "⚠️  Warning: No pods found, skipping health check"
+            echo "Warning: No pods found, skipping health check"
             exit 0
           fi
-
+          
           echo "   Testing pod: $POD"
-
-          kubectl port-forward $POD $PORT:$PORT -n $KUBE_NAMESPACE > /dev/null 2>&1 &
+          
+          PORT="${{ inputs.port }}"
+          
+          kubectl port-forward $POD ${PORT}:${PORT} -n $KUBE_NAMESPACE > /dev/null 2>&1 &
           PF_PID=$!
           sleep 2
-
-          HEALTH=$(curl -s -m 5 http://localhost:$PORT/health 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null)
-
+          
+          HEALTH=$(curl -s -m 5 http://localhost:${PORT}/health 2>/dev/null | jq -r '.status // "unknown"' 2>/dev/null)
+          
           kill $PF_PID 2>/dev/null || true
           wait $PF_PID 2>/dev/null || true
-
+          
           if [ "$HEALTH" = "healthy" ] || [ "$HEALTH" = "ok" ]; then
-            echo "✓ Health check passed: $HEALTH"
+            echo "Health check passed: $HEALTH"
           else
-            echo "⚠️  Health check returned: $HEALTH"
+            echo "Health check returned: $HEALTH"
           fi
 
       - name: Verify deployment
@@ -291,11 +299,11 @@ jobs:
         run: |
           echo "=== Deployment Status ==="
           kubectl get deployment -n $KUBE_NAMESPACE
-
+          
           echo ""
           echo "=== Pod Status ==="
           kubectl get pods -n $KUBE_NAMESPACE -l app=$KUBE_DEPLOYMENT
-
+          
           echo ""
           echo "=== Recent Events ==="
           kubectl get events -n $KUBE_NAMESPACE --sort-by='.lastTimestamp' | tail -10
@@ -306,9 +314,10 @@ jobs:
           KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
           KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         run: |
-          echo "✅ Deployment successful!"
+          echo "Deployment successful!"
           echo ""
           echo "Summary:"
+          echo "  Microservice: ${{ inputs.microservice-name }}"
           echo "  Deployment: $KUBE_DEPLOYMENT"
           echo "  Namespace: $KUBE_NAMESPACE"
           echo "  Image tag: ${{ steps.image-tag.outputs.tag }}"
