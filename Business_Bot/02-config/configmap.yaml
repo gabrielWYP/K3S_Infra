@@ -3,7 +3,7 @@ apiVersion: v1
 kind: ConfigMap
 metadata:
   name: business-bot-config
-  namespace: business-bot
+  namespace: businessbot
   labels:
     app: business-bot
     component: config
@@ -17,7 +17,7 @@ data:
   
   # Infrastructure Configuration
   REPOSITORY: "ghcr.io"
-  NAMESPACE: "business-bot"
+  NAMESPACE: "businessbot"
   
   # Service Discovery - Internal URLs
   WHATSAPP_GATEWAY_URL: "http://whatsapp-gateway-service:3000"

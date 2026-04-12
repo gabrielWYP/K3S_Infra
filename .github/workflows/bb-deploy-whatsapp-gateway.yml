@@ -9,25 +9,13 @@ on:
         type: string
       kube-namespace:
         description: 'Kubernetes namespace'
-        default: 'business-bot'
+        default: 'businessbot'
         required: false
         type: string
     secrets:
       KUBECONFIG_B64:
         description: 'Base64 encoded kubeconfig for K3S'
         required: true
-      GROQ_API_KEY:
-        description: 'GROQ API key for AI features'
-        required: false
-      DATABASE_URL:
-        description: 'Database connection URL'
-        required: false
-      REDIS_URL:
-        description: 'Redis connection URL'
-        required: false
-      BUSINESS_BOT_GLOBAL_SECRET_KEY:
-        description: 'Global secret key for Business Bot'
-        required: false
       # WhatsApp specific secrets
       WHATSAPP_ACCESS_TOKEN:
         description: 'WhatsApp API access token'
@@ -102,13 +90,24 @@ jobs:
         id: secrets-json
         run: |
           echo "Preparing WhatsApp secrets JSON..."
+
+          WA_TOKEN="${{ secrets.WHATSAPP_ACCESS_TOKEN }}"
+          WA_API_URL="${{ secrets.WHATSAPP_API_URL }}"
+          WA_PHONE_ID="${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}"
+          WA_WEBHOOK_SECRET="${{ secrets.WHATSAPP_WEBHOOK_SECRET }}"
+          WA_VERIFY_TOKEN="${{ secrets.WHATSAPP_VERIFY_TOKEN }}"
+
+          if [ -z "$WA_TOKEN" ] || [ -z "$WA_API_URL" ] || [ -z "$WA_PHONE_ID" ] || [ -z "$WA_WEBHOOK_SECRET" ] || [ -z "$WA_VERIFY_TOKEN" ]; then
+            echo "::error::Missing required WhatsApp secrets in caller repository/environment. Verify WHATSAPP_ACCESS_TOKEN, WHATSAPP_API_URL, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_WEBHOOK_SECRET and WHATSAPP_VERIFY_TOKEN."
+            exit 1
+          fi
           
           SECRETS_JSON=$(jq -cn \
-            --arg wa_token "${{ secrets.WHATSAPP_ACCESS_TOKEN }}" \
-            --arg wa_api_url "${{ secrets.WHATSAPP_API_URL }}" \
-            --arg wa_phone_id "${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}" \
-            --arg wa_webhook_secret "${{ secrets.WHATSAPP_WEBHOOK_SECRET }}" \
-            --arg wa_verify_token "${{ secrets.WHATSAPP_VERIFY_TOKEN }}" \
+            --arg wa_token "$WA_TOKEN" \
+            --arg wa_api_url "$WA_API_URL" \
+            --arg wa_phone_id "$WA_PHONE_ID" \
+            --arg wa_webhook_secret "$WA_WEBHOOK_SECRET" \
+            --arg wa_verify_token "$WA_VERIFY_TOKEN" \
             '{
               WHATSAPP_ACCESS_TOKEN: $wa_token,
               WHATSAPP_API_URL: $wa_api_url,
