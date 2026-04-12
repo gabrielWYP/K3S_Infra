@@ -20,10 +20,7 @@ data:
   NAMESPACE: "business-bot"
   
   # Service Discovery - Internal URLs
-  WHATSAPP_GATEWAY_URL: "http://whatsapp-gateway-service:80"
-  CHATBOT_URL: "http://chatbot-service:80"
-  BACKEND_URL: "http://backend-service:80"
-  
+  WHATSAPP_GATEWAY_URL: "http://whatsapp-gateway-service:3000"
   # Default Service Configuration
   DEFAULT_TIMEOUT: "30"
   MAX_RETRIES: "3"

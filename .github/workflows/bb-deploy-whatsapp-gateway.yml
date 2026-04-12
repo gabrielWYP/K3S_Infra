@@ -48,8 +48,8 @@ on:
 env:
   MICROSERVICE_NAME: whatsapp-gateway
   MANIFEST_PATH: Business_Bot/03-workloads/overlays/whatsapp-gateway
-  IMAGE_NAME: businessbot--whatsapp-gateway
-  CONTAINER_NAME: whatsapp-gateway-container
+  IMAGE_NAME: businessbot-whatsapp-gateway
+  CONTAINER_NAME: app
   KUBE_DEPLOYMENT: whatsapp-gateway-microservice-base
   PORT: '3000'
 

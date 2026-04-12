@@ -10,5 +10,5 @@ spec:
   - match: Host(`business-bot.ikigais.app`)
     kind: Rule
     services:
-    - name: business-bot-service
-      port: 80
+    - name: whatsapp-gateway-service
+      port: 3000

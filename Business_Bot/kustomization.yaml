@@ -6,5 +6,4 @@ resources:
   - 01-rbac/role.yaml
   - 01-rbac/rolebinding.yaml
   - 02-config/configmap.yaml
-  - 04-networking/service.yaml
   - 04-networking/ingressroute.yaml

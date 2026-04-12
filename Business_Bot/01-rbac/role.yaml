@@ -1,1 +1,12 @@
-[[], ['pods', 'services', 'configmaps'], ['get', 'list', 'create', 'update', 'delete']]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: business-bot-role
+  labels:
+    app: business-bot
+rules:
+- apiGroups: [""]
+  resources: ["configmaps", "secrets"]
+  verbs: ["get", "list"]
+---
