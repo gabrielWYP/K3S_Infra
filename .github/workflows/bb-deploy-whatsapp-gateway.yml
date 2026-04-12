@@ -103,7 +103,7 @@ jobs:
         run: |
           echo "Preparing WhatsApp secrets JSON..."
           
-          SECRETS_JSON=$(jq -n \
+          SECRETS_JSON=$(jq -cn \
             --arg wa_token "${{ secrets.WHATSAPP_ACCESS_TOKEN }}" \
             --arg wa_api_url "${{ secrets.WHATSAPP_API_URL }}" \
             --arg wa_phone_id "${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}" \
@@ -117,7 +117,7 @@ jobs:
               WHATSAPP_VERIFY_TOKEN: $wa_verify_token
             }')
           
-          echo "json=$SECRETS_JSON" >> $GITHUB_OUTPUT
+          echo "json=$SECRETS_JSON" >> "$GITHUB_OUTPUT"
           echo "Secrets JSON prepared (values hidden for security)"
 
       - name: Deploy to K3S
