@@ -37,7 +37,9 @@ jobs:
       - name: Validate Kubernetes schemas
         run: |
           echo "Validating manifests in ${{ inputs.manifest-path }}..."
-          find ${{ inputs.manifest-path }} -name '*.yaml' -not -name 'kustomization.yaml' | \
+          find ${{ inputs.manifest-path }} -name '*.yaml' \
+            -not -name 'kustomization.yaml' \
+            -not -name '*-patch.yaml' | \
             xargs kubeconform \
               -strict \
               -ignore-missing-schemas \
