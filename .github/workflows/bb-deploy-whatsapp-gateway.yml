@@ -34,6 +34,18 @@ on:
       GHCR_PULL_TOKEN:
         description: 'GitHub PAT with read:packages for pulling images from GHCR'
         required: true
+      OCI_QUEUE_ID:
+        description: 'OCI Queue OCID'
+        required: true
+      OCI_DLQ_ID:
+        description: 'OCI Dead Letter Queue OCID'
+        required: true
+      OCI_TENANCY_ID:
+        description: 'OCI Tenancy OCID'
+        required: true
+      OCI_USER_ID:
+        description: 'OCI User OCID'
+        required: true
 
 env:
   MICROSERVICE_NAME: whatsapp-gateway
@@ -98,9 +110,18 @@ jobs:
           WA_PHONE_ID="${{ secrets.WHATSAPP_PHONE_NUMBER_ID }}"
           WA_WEBHOOK_SECRET="${{ secrets.WHATSAPP_WEBHOOK_SECRET }}"
           WA_VERIFY_TOKEN="${{ secrets.WHATSAPP_VERIFY_TOKEN }}"
+          OCI_QUEUE_ID="${{ secrets.OCI_QUEUE_ID }}"
+          OCI_DLQ_ID="${{ secrets.OCI_DLQ_ID }}"
+          OCI_TENANCY_ID="${{ secrets.OCI_TENANCY_ID }}"
+          OCI_USER_ID="${{ secrets.OCI_USER_ID }}"
 
           if [ -z "$WA_TOKEN" ] || [ -z "$WA_API_URL" ] || [ -z "$WA_PHONE_ID" ] || [ -z "$WA_WEBHOOK_SECRET" ] || [ -z "$WA_VERIFY_TOKEN" ]; then
-            echo "::error::Missing required WhatsApp secrets in caller repository/environment. Verify WHATSAPP_ACCESS_TOKEN, WHATSAPP_API_URL, WHATSAPP_PHONE_NUMBER_ID, WHATSAPP_WEBHOOK_SECRET and WHATSAPP_VERIFY_TOKEN."
+            echo "::error::Missing required WhatsApp secrets."
+            exit 1
+          fi
+
+          if [ -z "$OCI_QUEUE_ID" ] || [ -z "$OCI_DLQ_ID" ] || [ -z "$OCI_TENANCY_ID" ] || [ -z "$OCI_USER_ID" ]; then
+            echo "::error::Missing required OCI Queue secrets: OCI_QUEUE_ID, OCI_DLQ_ID, OCI_TENANCY_ID, OCI_USER_ID."
             exit 1
           fi
           
@@ -110,12 +131,20 @@ jobs:
             --arg wa_phone_id "$WA_PHONE_ID" \
             --arg wa_webhook_secret "$WA_WEBHOOK_SECRET" \
             --arg wa_verify_token "$WA_VERIFY_TOKEN" \
+            --arg oci_queue_id "$OCI_QUEUE_ID" \
+            --arg oci_dlq_id "$OCI_DLQ_ID" \
+            --arg oci_tenancy_id "$OCI_TENANCY_ID" \
+            --arg oci_user_id "$OCI_USER_ID" \
             '{
               WHATSAPP_ACCESS_TOKEN: $wa_token,
               WHATSAPP_API_URL: $wa_api_url,
               WHATSAPP_PHONE_NUMBER_ID: $wa_phone_id,
               WHATSAPP_WEBHOOK_SECRET: $wa_webhook_secret,
-              WHATSAPP_VERIFY_TOKEN: $wa_verify_token
+              WHATSAPP_VERIFY_TOKEN: $wa_verify_token,
+              OCI_QUEUE_ID: $oci_queue_id,
+              OCI_DLQ_ID: $oci_dlq_id,
+              OCI_TENANCY_ID: $oci_tenancy_id,
+              OCI_USER_ID: $oci_user_id
             }')
           
           {
