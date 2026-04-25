@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       manifest-path:
-        description: 'Path to manifests directory (e.g., Sentiment_Analysis, Vocational_Test)'
+        description: 'Path to manifests directory (e.g., Business_Bot, Sentiment_Analysis)'
         required: true
         type: string
 
@@ -18,23 +18,35 @@ jobs:
         with:
           repository: gabrielwyp/K3S_Infra
 
-      - name: Install kubeval
+      - name: Install kubeconform
         run: |
-          mkdir -p /tmp/kubeval
-          wget -q https://github.com/instrumenta/kubeval/releases/latest/download/kubeval-linux-amd64.tar.gz -O - | tar xz -C /tmp/kubeval
-          echo "/tmp/kubeval" >> $GITHUB_PATH
+          KUBECONFORM_VERSION="v0.6.7"
+          if ! command -v kubeconform &> /dev/null; then
+            wget -q "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -O - | tar xz -C /tmp
+            sudo mv /tmp/kubeconform /usr/local/bin/
+          fi
+          kubeconform -v
 
-      - name: Validate YAML syntax
+      - name: Validate Kubernetes schemas
         run: |
           echo "Validating manifests in ${{ inputs.manifest-path }}..."
-          kubeval ${{ inputs.manifest-path }}/**/*.yaml --ignore-missing-schemas || true
-          echo "✓ YAML validation passed"
+          find ${{ inputs.manifest-path }} -name '*.yaml' -not -name 'kustomization.yaml' | \
+            xargs kubeconform \
+              -strict \
+              -ignore-missing-schemas \
+              -schema-location default \
+              -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+              -summary
+          echo "Schema validation completed"
 
       - name: Install yamllint
-        run: pip install yamllint
+        run: |
+          if ! command -v yamllint &> /dev/null; then
+            pip install --quiet yamllint
+          fi
 
       - name: Lint YAML
         run: |
           echo "Linting YAML files in ${{ inputs.manifest-path }}..."
-          yamllint ${{ inputs.manifest-path }}/ || true
-          echo "✓ YAML lint completed"
+          find ${{ inputs.manifest-path }} -name '*.yaml' | xargs yamllint -d relaxed
+          echo "YAML lint completed"
