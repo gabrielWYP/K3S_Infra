@@ -14,11 +14,11 @@ data:
   ENVIRONMENT: "production"
   LOG_LEVEL: "INFO"
   APP_MODE: "PRODUCTION"
-  
+
   # Infrastructure Configuration
   REPOSITORY: "ghcr.io"
   NAMESPACE: "businessbot"
-  
+
   # Service Discovery - Internal URLs
   WHATSAPP_GATEWAY_URL: "http://whatsapp-gateway-service:3000"
   # Default Service Configuration
@@ -26,4 +26,3 @@ data:
   MAX_RETRIES: "3"
   RATE_LIMIT_REQUESTS: "100"
   RATE_LIMIT_WINDOW: "60"
----
