@@ -16,7 +16,6 @@ on:
       KUBECONFIG_B64:
         description: 'Base64 encoded kubeconfig for K3S'
         required: true
-      # WhatsApp specific secrets
       WHATSAPP_ACCESS_TOKEN:
         description: 'WhatsApp API access token'
         required: true
@@ -116,7 +115,11 @@ jobs:
               WHATSAPP_VERIFY_TOKEN: $wa_verify_token
             }')
           
-          echo "json=$SECRETS_JSON" >> "$GITHUB_OUTPUT"
+          {
+            echo "json<<SECRETS_EOF"
+            echo "$SECRETS_JSON"
+            echo "SECRETS_EOF"
+          } >> "$GITHUB_OUTPUT"
           echo "Secrets JSON prepared (values hidden for security)"
 
       - name: Deploy to K3S
@@ -132,10 +135,6 @@ jobs:
           port: ${{ env.PORT }}
         env:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
-          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
-          DATABASE_URL: ${{ secrets.DATABASE_URL }}
-          REDIS_URL: ${{ secrets.REDIS_URL }}
-          BUSINESS_BOT_GLOBAL_SECRET_KEY: ${{ secrets.BUSINESS_BOT_GLOBAL_SECRET_KEY }}
           MICROSERVICE_SECRETS_JSON: ${{ steps.secrets-json.outputs.json }}
 
   post-deploy-verification:

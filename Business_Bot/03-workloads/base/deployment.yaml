@@ -26,8 +26,6 @@ spec:
         envFrom:
         - configMapRef:
             name: business-bot-config
-        - secretRef:
-            name: business-bot-global-secrets
         env:
         - name: SERVICE_NAME
           value: "microservice-base"

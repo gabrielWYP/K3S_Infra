@@ -79,29 +79,7 @@ runs:
         kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
         echo "Namespace '$KUBE_NAMESPACE' ready"
 
-    - name: Create global Business Bot secrets
-      shell: bash
-      env:
-        KUBECONFIG: /tmp/kubeconfig
-        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
-        GROQ_API_KEY: ${{ env.GROQ_API_KEY }}
-        DATABASE_URL: ${{ env.DATABASE_URL }}
-        REDIS_URL: ${{ env.REDIS_URL }}
-        BUSINESS_BOT_GLOBAL_SECRET_KEY: ${{ env.BUSINESS_BOT_GLOBAL_SECRET_KEY }}
-      run: |
-        echo "Creating global Business Bot secrets..."
-        
-        kubectl create secret generic business-bot-global-secrets \
-          --from-literal=GROQ_API_KEY="${GROQ_API_KEY:-}" \
-          --from-literal=DATABASE_URL="${DATABASE_URL:-}" \
-          --from-literal=REDIS_URL="${REDIS_URL:-}" \
-          --from-literal=SECRET_KEY="${BUSINESS_BOT_GLOBAL_SECRET_KEY:-}" \
-          -n $KUBE_NAMESPACE \
-          --dry-run=client -o yaml | kubectl apply -f -
-        
-        echo "Global secrets created"
-
-    - name: Create microservice-specific secrets
+    - name: Create microservice secrets
       shell: bash
       env:
         KUBECONFIG: /tmp/kubeconfig
@@ -109,14 +87,23 @@ runs:
         MICROSERVICE_NAME: ${{ inputs.microservice-name }}
         SECRETS_JSON: ${{ env.MICROSERVICE_SECRETS_JSON }}
       run: |
-        echo "Creating microservice-specific secrets for $MICROSERVICE_NAME..."
+        echo "Creating secrets for $MICROSERVICE_NAME..."
         
         if [ -n "$SECRETS_JSON" ] && [ "$SECRETS_JSON" != "null" ] && [ "$SECRETS_JSON" != "" ]; then
-          echo "Creating secrets from JSON..."
+          # Write JSON to temp file to avoid shell word-splitting issues
+          TMPFILE=$(mktemp)
+          echo "$SECRETS_JSON" > "$TMPFILE"
+          
+          # Build kubectl args safely via temp env file
+          ENVFILE=$(mktemp)
+          jq -r 'to_entries[] | "\(.key)=\(.value)"' "$TMPFILE" > "$ENVFILE"
+          
           kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
-            $(echo "$SECRETS_JSON" | jq -r 'to_entries[] | "--from-literal=\(.key)=\(.value)"') \
+            --from-env-file="$ENVFILE" \
             -n $KUBE_NAMESPACE \
             --dry-run=client -o yaml | kubectl apply -f -
+          
+          rm -f "$TMPFILE" "$ENVFILE"
           echo "Secrets created from JSON"
         else
           echo "No secrets JSON provided, creating empty secret placeholder"
@@ -124,7 +111,6 @@ runs:
             --from-literal=PLACEHOLDER="true" \
             -n $KUBE_NAMESPACE \
             --dry-run=client -o yaml | kubectl apply -f -
-          echo "Empty secret placeholder created"
         fi
 
     - name: Apply manifests with kustomize

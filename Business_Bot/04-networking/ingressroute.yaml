@@ -2,7 +2,7 @@ apiVersion: traefik.containo.us/v1alpha1
 kind: IngressRoute
 metadata:
   name: business-bot-ingress
-  namespace: default
+  namespace: businessbot
 spec:
   entryPoints:
     - web
@@ -10,5 +10,5 @@ spec:
   - match: Host(`business-bot.ikigais.app`)
     kind: Rule
     services:
-    - name: whatsapp-gateway-service
-      port: 3000
+    - name: whatsapp-gateway-microservice-base-service
+      port: 80

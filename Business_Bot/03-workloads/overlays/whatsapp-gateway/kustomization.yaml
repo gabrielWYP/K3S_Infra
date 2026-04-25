@@ -16,6 +16,7 @@ commonLabels:
 
 patchesStrategicMerge:
   - deployment-patch.yaml
+  - service-patch.yaml
 
 images:
   - name: ghcr.io/gabrielwyp/business-bot-microservice

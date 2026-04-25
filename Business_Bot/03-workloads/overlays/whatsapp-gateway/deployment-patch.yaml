@@ -32,6 +32,4 @@ spec:
         - configMapRef:
             name: business-bot-config
         - secretRef:
-            name: business-bot-global-secrets
-        - secretRef:
             name: whatsapp-gateway-secrets
