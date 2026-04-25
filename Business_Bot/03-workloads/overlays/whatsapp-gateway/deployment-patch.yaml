@@ -1,44 +1,44 @@
 ---
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: microservice-base
-spec:
-  template:
-    spec:
-      containers:
-        - name: app
-          $patch: replace
-          image: ghcr.io/gabrielwyp/businessbot-whatsapp-gateway:latest
-          ports:
-            - name: http
-              containerPort: 3000
-          env:
-            - name: SERVICE_NAME
-              value: "whatsapp-gateway"
-            - name: PORT
-              value: "3000"
-          startupProbe:
-            httpGet:
-              path: /health
-              port: 3000
-          readinessProbe:
-            httpGet:
-              path: /health
-              port: 3000
-          livenessProbe:
-            httpGet:
-              path: /health
-              port: 3000
-          envFrom:
-            - configMapRef:
-                name: business-bot-config
-            - secretRef:
-                name: whatsapp-gateway-secrets
-          resources:
-            requests:
-              memory: "128Mi"
-              cpu: "100m"
-            limits:
-              memory: "512Mi"
-              cpu: "500m"
+- op: replace
+  path: /spec/template/spec/containers/0/ports
+  value:
+    - name: http
+      containerPort: 3000
+- op: replace
+  path: /spec/template/spec/containers/0/env
+  value:
+    - name: SERVICE_NAME
+      value: "whatsapp-gateway"
+    - name: PORT
+      value: "3000"
+- op: replace
+  path: /spec/template/spec/containers/0/startupProbe
+  value:
+    httpGet:
+      path: /health
+      port: 3000
+    failureThreshold: 30
+    periodSeconds: 5
+- op: replace
+  path: /spec/template/spec/containers/0/readinessProbe
+  value:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 15
+    periodSeconds: 10
+- op: replace
+  path: /spec/template/spec/containers/0/livenessProbe
+  value:
+    httpGet:
+      path: /health
+      port: 3000
+    initialDelaySeconds: 30
+    periodSeconds: 30
+- op: replace
+  path: /spec/template/spec/containers/0/envFrom
+  value:
+    - configMapRef:
+        name: business-bot-config
+    - secretRef:
+        name: whatsapp-gateway-secrets

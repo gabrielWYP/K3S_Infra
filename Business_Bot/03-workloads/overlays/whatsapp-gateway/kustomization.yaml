@@ -18,6 +18,9 @@ labels:
 
 patches:
   - path: deployment-patch.yaml
+    target:
+      kind: Deployment
+      name: microservice-base
   - path: service-patch.yaml
 
 images:
