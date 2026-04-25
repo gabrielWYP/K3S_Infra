@@ -21,18 +21,17 @@ jobs:
       - name: Install kubeconform
         run: |
           KUBECONFORM_VERSION="v0.6.7"
-          if ! command -v kubeconform &> /dev/null; then
-            ARCH=$(uname -m)
-            case "$ARCH" in
-              x86_64)  ARCH_SUFFIX="amd64" ;;
-              aarch64) ARCH_SUFFIX="arm64" ;;
-              armv7l)  ARCH_SUFFIX="armv6" ;;
-              *)       echo "Unsupported architecture: $ARCH"; exit 1 ;;
-            esac
-            echo "Detected architecture: $ARCH -> $ARCH_SUFFIX"
-            wget -q "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${ARCH_SUFFIX}.tar.gz" -O - | tar xz -C /tmp
-            sudo mv /tmp/kubeconform /usr/local/bin/
-          fi
+          ARCH=$(uname -m)
+          case "$ARCH" in
+            x86_64)  ARCH_SUFFIX="amd64" ;;
+            aarch64) ARCH_SUFFIX="arm64" ;;
+            armv7l)  ARCH_SUFFIX="armv6" ;;
+            *)       echo "Unsupported architecture: $ARCH"; exit 1 ;;
+          esac
+          echo "Detected architecture: $ARCH -> $ARCH_SUFFIX"
+          sudo rm -f /usr/local/bin/kubeconform
+          wget -q "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${ARCH_SUFFIX}.tar.gz" -O - | tar xz -C /tmp
+          sudo mv /tmp/kubeconform /usr/local/bin/
           kubeconform -v
 
       - name: Validate Kubernetes schemas
