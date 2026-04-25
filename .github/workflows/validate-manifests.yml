@@ -22,7 +22,15 @@ jobs:
         run: |
           KUBECONFORM_VERSION="v0.6.7"
           if ! command -v kubeconform &> /dev/null; then
-            wget -q "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" -O - | tar xz -C /tmp
+            ARCH=$(uname -m)
+            case "$ARCH" in
+              x86_64)  ARCH_SUFFIX="amd64" ;;
+              aarch64) ARCH_SUFFIX="arm64" ;;
+              armv7l)  ARCH_SUFFIX="armv6" ;;
+              *)       echo "Unsupported architecture: $ARCH"; exit 1 ;;
+            esac
+            echo "Detected architecture: $ARCH -> $ARCH_SUFFIX"
+            wget -q "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${ARCH_SUFFIX}.tar.gz" -O - | tar xz -C /tmp
             sudo mv /tmp/kubeconform /usr/local/bin/
           fi
           kubeconform -v
