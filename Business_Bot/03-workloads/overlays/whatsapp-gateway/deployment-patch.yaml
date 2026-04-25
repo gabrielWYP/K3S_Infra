@@ -7,29 +7,29 @@ spec:
   template:
     spec:
       containers:
-      - name: app
-        ports:
-        - name: http
-          containerPort: 3000
-        env:
-        - name: SERVICE_NAME
-          value: "whatsapp-gateway"
-        - name: PORT
-          value: "3000"
-        startupProbe:
-          httpGet:
-            path: /health
-            port: 3000
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 3000
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 3000
-        envFrom:
-        - configMapRef:
-            name: business-bot-config
-        - secretRef:
-            name: whatsapp-gateway-secrets
+        - name: app
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: SERVICE_NAME
+              value: "whatsapp-gateway"
+            - name: PORT
+              value: "3000"
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 3000
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 3000
+          envFrom:
+            - configMapRef:
+                name: business-bot-config
+            - secretRef:
+                name: whatsapp-gateway-secrets

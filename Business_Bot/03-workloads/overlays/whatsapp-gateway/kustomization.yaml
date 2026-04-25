@@ -9,14 +9,16 @@ resources:
 
 namePrefix: whatsapp-gateway-
 
-commonLabels:
-  app: whatsapp-gateway
-  component: gateway
-  version: v1
+labels:
+  - pairs:
+      app: whatsapp-gateway
+      component: gateway
+      version: v1
+    includeSelectors: true
 
-patchesStrategicMerge:
-  - deployment-patch.yaml
-  - service-patch.yaml
+patches:
+  - path: deployment-patch.yaml
+  - path: service-patch.yaml
 
 images:
   - name: ghcr.io/gabrielwyp/business-bot-microservice

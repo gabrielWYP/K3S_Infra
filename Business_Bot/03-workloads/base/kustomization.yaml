@@ -6,13 +6,11 @@ resources:
   - deployment.yaml
   - service.yaml
 
-# Base configuration that will be overridden by overlays
-namePrefix: ""
-nameSuffix: ""
-
-commonLabels:
-  project: business-bot
-  managed-by: kustomize
+labels:
+  - pairs:
+      project: business-bot
+      managed-by: kustomize
+    includeSelectors: false
 
 commonAnnotations:
   description: "Business Bot Microservice Base Configuration"
