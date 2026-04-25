@@ -16,6 +16,8 @@ spec:
         app: microservice-base
     spec:
       serviceAccountName: business-bot-sa
+      imagePullSecrets:
+        - name: ghcr-pull-secret
       containers:
       - name: app
         image: ghcr.io/gabrielwyp/business-bot-microservice:latest

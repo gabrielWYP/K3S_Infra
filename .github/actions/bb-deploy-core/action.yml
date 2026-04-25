@@ -79,6 +79,28 @@ runs:
         kubectl create namespace $KUBE_NAMESPACE --dry-run=client -o yaml | kubectl apply -f -
         echo "Namespace '$KUBE_NAMESPACE' ready"
 
+    - name: Create GHCR image pull secret
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        REGISTRY: ${{ inputs.registry }}
+        GHCR_TOKEN: ${{ env.GHCR_PULL_TOKEN }}
+        REPO_OWNER: ${{ github.repository_owner }}
+      run: |
+        if [ -z "$GHCR_TOKEN" ]; then
+          echo "Warning: GHCR_PULL_TOKEN not set, skipping image pull secret"
+          exit 0
+        fi
+        REPO_OWNER_LOWER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
+        kubectl create secret docker-registry ghcr-pull-secret \
+          --docker-server="$REGISTRY" \
+          --docker-username="$REPO_OWNER_LOWER" \
+          --docker-password="$GHCR_TOKEN" \
+          -n $KUBE_NAMESPACE \
+          --dry-run=client -o yaml | kubectl apply -f -
+        echo "GHCR pull secret ready"
+
     - name: Create microservice secrets
       shell: bash
       env:

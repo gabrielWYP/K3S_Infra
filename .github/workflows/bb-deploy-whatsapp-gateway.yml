@@ -31,6 +31,9 @@ on:
       WHATSAPP_VERIFY_TOKEN:
         description: 'WhatsApp webhook verify token'
         required: true
+      GHCR_PULL_TOKEN:
+        description: 'GitHub PAT with read:packages for pulling images from GHCR'
+        required: true
 
 env:
   MICROSERVICE_NAME: whatsapp-gateway
@@ -135,6 +138,7 @@ jobs:
           port: ${{ env.PORT }}
         env:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           MICROSERVICE_SECRETS_JSON: ${{ steps.secrets-json.outputs.json }}
 
   post-deploy-verification:
