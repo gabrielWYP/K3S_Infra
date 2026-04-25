@@ -113,6 +113,19 @@ runs:
             --dry-run=client -o yaml | kubectl apply -f -
         fi
 
+    - name: Apply shared resources
+      shell: bash
+      env:
+        KUBECONFIG: /tmp/kubeconfig
+        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+        MANIFEST_PATH: ${{ inputs.manifest-path }}
+      run: |
+        # Derive the project root from the overlay path (e.g., Business_Bot/03-workloads/overlays/x -> Business_Bot)
+        PROJECT_ROOT=$(echo "$MANIFEST_PATH" | cut -d'/' -f1)
+        echo "Applying shared resources from $PROJECT_ROOT..."
+        kubectl apply -k $PROJECT_ROOT -n $KUBE_NAMESPACE
+        echo "Shared resources applied"
+
     - name: Apply manifests with kustomize
       shell: bash
       env:
