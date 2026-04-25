@@ -8,6 +8,8 @@ spec:
     spec:
       containers:
         - name: app
+          $patch: replace
+          image: ghcr.io/gabrielwyp/businessbot-whatsapp-gateway:latest
           ports:
             - name: http
               containerPort: 3000
@@ -33,3 +35,10 @@ spec:
                 name: business-bot-config
             - secretRef:
                 name: whatsapp-gateway-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
