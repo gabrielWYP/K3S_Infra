@@ -12,7 +12,7 @@
     - name: PORT
       value: "3000"
     - name: OCI_PRIVATE_KEY_PATH
-      value: "/app/auth/OCI_PRIVATE_KEY_STRING"
+      value: "/app/auth/private_key.pem"
 - op: replace
   path: /spec/template/spec/containers/0/startupProbe
   value:
@@ -58,4 +58,4 @@
         secretName: whatsapp-gateway-secrets
         items:
           - key: OCI_PRIVATE_KEY_STRING
-            path: OCI_PRIVATE_KEY_STRING
+            path: private_key.pem
