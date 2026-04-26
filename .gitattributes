@@ -1,0 +1,25 @@
+# Normalize line endings to LF for all text files in the repo.
+# Prevents CRLF/LF inconsistencies across Windows/Linux/macOS environments.
+
+* text=auto eol=lf
+
+# Kubernetes / YAML manifests — always LF
+*.yaml text eol=lf
+*.yml  text eol=lf
+
+# Shell scripts — always LF (CRLF breaks shebang execution on Linux)
+*.sh text eol=lf
+
+# Markdown
+*.md text eol=lf
+
+# JSON
+*.json text eol=lf
+
+# Binary files — no line ending conversion
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pem  binary

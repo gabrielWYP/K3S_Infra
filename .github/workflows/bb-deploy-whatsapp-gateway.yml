@@ -52,6 +52,9 @@ on:
       OCI_PRIVATE_KEY_STRING:
         description: 'OCI private key PEM content'
         required: true
+      OCI_CONFIG:
+        description: 'OCI SDK config file content (~/.oci/config). Must include [DEFAULT] profile with tenancy, user, fingerprint, key_file=/home/nodejs/.oci/private_key.pem and region.'
+        required: true
 
 env:
   MICROSERVICE_NAME: whatsapp-gateway
@@ -122,13 +125,14 @@ jobs:
           OCI_USER_ID="${{ secrets.OCI_USER_ID }}"
           OCI_FINGERPRINT="${{ secrets.OCI_FINGERPRINT }}"
           OCI_PRIVATE_KEY_STRING="${{ secrets.OCI_PRIVATE_KEY_STRING }}"
+          OCI_CONFIG="${{ secrets.OCI_CONFIG }}"
 
           if [ -z "$WA_TOKEN" ] || [ -z "$WA_API_URL" ] || [ -z "$WA_PHONE_ID" ] || [ -z "$WA_WEBHOOK_SECRET" ] || [ -z "$WA_VERIFY_TOKEN" ]; then
             echo "::error::Missing required WhatsApp secrets."
             exit 1
           fi
 
-          if [ -z "$OCI_QUEUE_ID" ] || [ -z "$OCI_DLQ_ID" ] || [ -z "$OCI_TENANCY_ID" ] || [ -z "$OCI_USER_ID" ] || [ -z "$OCI_FINGERPRINT" ] || [ -z "$OCI_PRIVATE_KEY_STRING" ]; then
+          if [ -z "$OCI_QUEUE_ID" ] || [ -z "$OCI_DLQ_ID" ] || [ -z "$OCI_TENANCY_ID" ] || [ -z "$OCI_USER_ID" ] || [ -z "$OCI_FINGERPRINT" ] || [ -z "$OCI_PRIVATE_KEY_STRING" ] || [ -z "$OCI_CONFIG" ]; then
             echo "::error::Missing required OCI secrets."
             exit 1
           fi
@@ -145,6 +149,7 @@ jobs:
             --arg oci_user_id "$OCI_USER_ID" \
             --arg oci_fingerprint "$OCI_FINGERPRINT" \
             --arg oci_private_key "$OCI_PRIVATE_KEY_STRING" \
+            --arg oci_config "$OCI_CONFIG" \
             '{
               WHATSAPP_ACCESS_TOKEN: $wa_token,
               WHATSAPP_API_URL: $wa_api_url,
@@ -156,7 +161,8 @@ jobs:
               OCI_TENANCY_ID: $oci_tenancy_id,
               OCI_USER_ID: $oci_user_id,
               OCI_FINGERPRINT: $oci_fingerprint,
-              OCI_PRIVATE_KEY_STRING: $oci_private_key
+              OCI_PRIVATE_KEY_STRING: $oci_private_key,
+              OCI_CONFIG: $oci_config
             }')
           
           {
