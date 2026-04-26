@@ -112,20 +112,32 @@ runs:
         echo "Creating secrets for $MICROSERVICE_NAME..."
         
         if [ -n "$SECRETS_JSON" ] && [ "$SECRETS_JSON" != "null" ] && [ "$SECRETS_JSON" != "" ]; then
-          # Write JSON to temp file to avoid shell word-splitting issues
           TMPFILE=$(mktemp)
           echo "$SECRETS_JSON" > "$TMPFILE"
           
-          # Build kubectl args safely via temp env file
+          # Extract multiline values (like PEM keys) separately
+          PEMFILE=$(mktemp)
+          PEM_VALUE=$(jq -r '.OCI_PRIVATE_KEY_STRING // empty' "$TMPFILE")
+          
+          # Build env file excluding multiline values
           ENVFILE=$(mktemp)
-          jq -r 'to_entries[] | "\(.key)=\(.value)"' "$TMPFILE" > "$ENVFILE"
+          jq -r 'del(.OCI_PRIVATE_KEY_STRING) | to_entries[] | "\(.key)=\(.value)"' "$TMPFILE" > "$ENVFILE"
           
-          kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
-            --from-env-file="$ENVFILE" \
-            -n $KUBE_NAMESPACE \
-            --dry-run=client -o yaml | kubectl apply -f -
+          if [ -n "$PEM_VALUE" ]; then
+            echo "$PEM_VALUE" > "$PEMFILE"
+            kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
+              --from-env-file="$ENVFILE" \
+              --from-file=OCI_PRIVATE_KEY_STRING="$PEMFILE" \
+              -n $KUBE_NAMESPACE \
+              --dry-run=client -o yaml | kubectl apply -f -
+          else
+            kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
+              --from-env-file="$ENVFILE" \
+              -n $KUBE_NAMESPACE \
+              --dry-run=client -o yaml | kubectl apply -f -
+          fi
           
-          rm -f "$TMPFILE" "$ENVFILE"
+          rm -f "$TMPFILE" "$ENVFILE" "$PEMFILE"
           echo "Secrets created from JSON"
         else
           echo "No secrets JSON provided, creating empty secret placeholder"
