@@ -154,36 +154,22 @@ runs:
         KUBECONFIG: /tmp/kubeconfig
         KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
         MANIFEST_PATH: ${{ inputs.manifest-path }}
-      run: |
-        echo "Applying manifests from $MANIFEST_PATH..."
-        kubectl apply -k $MANIFEST_PATH -n $KUBE_NAMESPACE
-        echo "Manifests applied successfully"
-
-    - name: Update deployment image
-      shell: bash
-      env:
-        KUBECONFIG: /tmp/kubeconfig
         IMAGE_TAG: ${{ inputs.image-tag }}
         REGISTRY: ${{ inputs.registry }}
         IMAGE_NAME: ${{ inputs.image-name }}
-        CONTAINER_NAME: ${{ inputs.container-name }}
-        KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
-        KUBE_DEPLOYMENT: ${{ inputs.kube-deployment }}
         REPO_OWNER: ${{ github.repository_owner }}
       run: |
         REPO_OWNER_LOWER=$(echo "$REPO_OWNER" | tr '[:upper:]' '[:lower:]')
-        IMAGE="${REGISTRY}/${REPO_OWNER_LOWER}/${IMAGE_NAME}:${IMAGE_TAG}"
-        
-        echo "Updating deployment image..."
-        echo "   Deployment : $KUBE_DEPLOYMENT"
-        echo "   Container  : $CONTAINER_NAME"
-        echo "   Image      : $IMAGE"
-        
-        kubectl set image deployment/$KUBE_DEPLOYMENT \
-          ${CONTAINER_NAME}=${IMAGE} \
-          -n $KUBE_NAMESPACE
-        
-        echo "Image updated successfully"
+        FULL_IMAGE="${REGISTRY}/${REPO_OWNER_LOWER}/${IMAGE_NAME}"
+
+        echo "Setting image to ${FULL_IMAGE}:${IMAGE_TAG}..."
+        pushd $MANIFEST_PATH > /dev/null
+        kustomize edit set image "${FULL_IMAGE}:${IMAGE_TAG}"
+        popd > /dev/null
+
+        echo "Applying manifests from $MANIFEST_PATH..."
+        kubectl apply -k $MANIFEST_PATH -n $KUBE_NAMESPACE
+        echo "Manifests applied with image: ${FULL_IMAGE}:${IMAGE_TAG}"
 
     - name: Wait for rollout
       shell: bash
