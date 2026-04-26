@@ -46,6 +46,12 @@ on:
       OCI_USER_ID:
         description: 'OCI User OCID'
         required: true
+      OCI_FINGERPRINT:
+        description: 'OCI API key fingerprint'
+        required: true
+      OCI_PRIVATE_KEY_STRING:
+        description: 'OCI private key PEM content'
+        required: true
 
 env:
   MICROSERVICE_NAME: whatsapp-gateway
@@ -114,14 +120,16 @@ jobs:
           OCI_DLQ_ID="${{ secrets.OCI_DLQ_ID }}"
           OCI_TENANCY_ID="${{ secrets.OCI_TENANCY_ID }}"
           OCI_USER_ID="${{ secrets.OCI_USER_ID }}"
+          OCI_FINGERPRINT="${{ secrets.OCI_FINGERPRINT }}"
+          OCI_PRIVATE_KEY_STRING="${{ secrets.OCI_PRIVATE_KEY_STRING }}"
 
           if [ -z "$WA_TOKEN" ] || [ -z "$WA_API_URL" ] || [ -z "$WA_PHONE_ID" ] || [ -z "$WA_WEBHOOK_SECRET" ] || [ -z "$WA_VERIFY_TOKEN" ]; then
             echo "::error::Missing required WhatsApp secrets."
             exit 1
           fi
 
-          if [ -z "$OCI_QUEUE_ID" ] || [ -z "$OCI_DLQ_ID" ] || [ -z "$OCI_TENANCY_ID" ] || [ -z "$OCI_USER_ID" ]; then
-            echo "::error::Missing required OCI Queue secrets: OCI_QUEUE_ID, OCI_DLQ_ID, OCI_TENANCY_ID, OCI_USER_ID."
+          if [ -z "$OCI_QUEUE_ID" ] || [ -z "$OCI_DLQ_ID" ] || [ -z "$OCI_TENANCY_ID" ] || [ -z "$OCI_USER_ID" ] || [ -z "$OCI_FINGERPRINT" ] || [ -z "$OCI_PRIVATE_KEY_STRING" ]; then
+            echo "::error::Missing required OCI secrets."
             exit 1
           fi
           
@@ -135,6 +143,8 @@ jobs:
             --arg oci_dlq_id "$OCI_DLQ_ID" \
             --arg oci_tenancy_id "$OCI_TENANCY_ID" \
             --arg oci_user_id "$OCI_USER_ID" \
+            --arg oci_fingerprint "$OCI_FINGERPRINT" \
+            --arg oci_private_key "$OCI_PRIVATE_KEY_STRING" \
             '{
               WHATSAPP_ACCESS_TOKEN: $wa_token,
               WHATSAPP_API_URL: $wa_api_url,
@@ -144,7 +154,9 @@ jobs:
               OCI_QUEUE_ID: $oci_queue_id,
               OCI_DLQ_ID: $oci_dlq_id,
               OCI_TENANCY_ID: $oci_tenancy_id,
-              OCI_USER_ID: $oci_user_id
+              OCI_USER_ID: $oci_user_id,
+              OCI_FINGERPRINT: $oci_fingerprint,
+              OCI_PRIVATE_KEY_STRING: $oci_private_key
             }')
           
           {

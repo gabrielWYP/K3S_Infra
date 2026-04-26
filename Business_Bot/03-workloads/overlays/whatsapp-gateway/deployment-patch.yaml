@@ -11,6 +11,8 @@
       value: "whatsapp-gateway"
     - name: PORT
       value: "3000"
+    - name: OCI_PRIVATE_KEY_PATH
+      value: "/app/auth/OCI_PRIVATE_KEY_STRING"
 - op: replace
   path: /spec/template/spec/containers/0/startupProbe
   value:
@@ -42,3 +44,18 @@
         name: business-bot-config
     - secretRef:
         name: whatsapp-gateway-secrets
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts
+  value:
+    - name: oci-key
+      mountPath: "/app/auth"
+      readOnly: true
+- op: add
+  path: /spec/template/spec/volumes
+  value:
+    - name: oci-key
+      secret:
+        secretName: whatsapp-gateway-secrets
+        items:
+          - key: OCI_PRIVATE_KEY_STRING
+            path: OCI_PRIVATE_KEY_STRING
