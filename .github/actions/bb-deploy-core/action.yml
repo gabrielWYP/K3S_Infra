@@ -115,30 +115,27 @@ runs:
           TMPFILE=$(mktemp)
           echo "$SECRETS_JSON" > "$TMPFILE"
           
-          # Extract multiline values (like PEM keys) separately
-          PEMFILE=$(mktemp)
-          PEM_VALUE=$(jq -r '.OCI_PRIVATE_KEY_STRING // empty' "$TMPFILE")
+          # Build the secret YAML with all values base64-encoded
+          SECRET_YAML=$(mktemp)
+          cat > "$SECRET_YAML" <<YAML_EOF
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: ${MICROSERVICE_NAME}-secrets
+          namespace: ${KUBE_NAMESPACE}
+        type: Opaque
+        data:
+        YAML_EOF
           
-          # Build env file excluding multiline values
-          ENVFILE=$(mktemp)
-          jq -r 'del(.OCI_PRIVATE_KEY_STRING) | to_entries[] | "\(.key)=\(.value)"' "$TMPFILE" > "$ENVFILE"
+          # Encode each value to base64 and append (handles multiline values like PEM keys)
+          jq -r 'to_entries[] | "\(.key) \(.value)"' "$TMPFILE" | while IFS=' ' read -r key value; do
+            encoded=$(echo -n "$value" | base64 -w 0)
+            echo "  ${key}: ${encoded}" >> "$SECRET_YAML"
+          done
           
-          if [ -n "$PEM_VALUE" ]; then
-            echo "$PEM_VALUE" > "$PEMFILE"
-            kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
-              --from-env-file="$ENVFILE" \
-              --from-file=OCI_PRIVATE_KEY_STRING="$PEMFILE" \
-              -n $KUBE_NAMESPACE \
-              --dry-run=client -o yaml | kubectl apply -f -
-          else
-            kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
-              --from-env-file="$ENVFILE" \
-              -n $KUBE_NAMESPACE \
-              --dry-run=client -o yaml | kubectl apply -f -
-          fi
-          
-          rm -f "$TMPFILE" "$ENVFILE" "$PEMFILE"
-          echo "Secrets created from JSON"
+          kubectl apply -f "$SECRET_YAML"
+          rm -f "$TMPFILE" "$SECRET_YAML"
+          echo "Secrets created"
         else
           echo "No secrets JSON provided, creating empty secret placeholder"
           kubectl create secret generic ${MICROSERVICE_NAME}-secrets \
