@@ -163,9 +163,7 @@ runs:
         FULL_IMAGE="${REGISTRY}/${REPO_OWNER_LOWER}/${IMAGE_NAME}"
 
         echo "Setting image to ${FULL_IMAGE}:${IMAGE_TAG}..."
-        pushd $MANIFEST_PATH > /dev/null
-        kustomize edit set image "${FULL_IMAGE}:${IMAGE_TAG}"
-        popd > /dev/null
+        sed -i "s|newTag: .*|newTag: ${IMAGE_TAG}|g" $MANIFEST_PATH/kustomization.yaml
 
         echo "Applying manifests from $MANIFEST_PATH..."
         kubectl apply -k $MANIFEST_PATH -n $KUBE_NAMESPACE
