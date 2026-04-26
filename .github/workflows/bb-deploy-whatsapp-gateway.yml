@@ -40,6 +40,9 @@ on:
       OCI_DLQ_ID:
         description: 'OCI Dead Letter Queue OCID'
         required: true
+      OCI_QUEUE_ENDPOINT:
+        description: 'OCI Queue cell-specific messages endpoint (e.g. https://cell-1.queue.messaging.us-ashburn-1.oci.oraclecloud.com)'
+        required: true
       OCI_TENANCY_ID:
         description: 'OCI Tenancy OCID'
         required: true
@@ -118,6 +121,7 @@ jobs:
           WA_VERIFY_TOKEN="${{ secrets.WHATSAPP_VERIFY_TOKEN }}"
           OCI_QUEUE_ID="${{ secrets.OCI_QUEUE_ID }}"
           OCI_DLQ_ID="${{ secrets.OCI_DLQ_ID }}"
+          OCI_QUEUE_ENDPOINT="${{ secrets.OCI_QUEUE_ENDPOINT }}"
           OCI_TENANCY_ID="${{ secrets.OCI_TENANCY_ID }}"
           OCI_USER_ID="${{ secrets.OCI_USER_ID }}"
           OCI_FINGERPRINT="${{ secrets.OCI_FINGERPRINT }}"
@@ -128,7 +132,7 @@ jobs:
             exit 1
           fi
 
-          if [ -z "$OCI_QUEUE_ID" ] || [ -z "$OCI_DLQ_ID" ] || [ -z "$OCI_TENANCY_ID" ] || [ -z "$OCI_USER_ID" ] || [ -z "$OCI_FINGERPRINT" ] || [ -z "$OCI_PRIVATE_KEY_STRING" ]; then
+          if [ -z "$OCI_QUEUE_ID" ] || [ -z "$OCI_DLQ_ID" ] || [ -z "$OCI_QUEUE_ENDPOINT" ] || [ -z "$OCI_TENANCY_ID" ] || [ -z "$OCI_USER_ID" ] || [ -z "$OCI_FINGERPRINT" ] || [ -z "$OCI_PRIVATE_KEY_STRING" ]; then
             echo "::error::Missing required OCI secrets."
             exit 1
           fi
@@ -141,6 +145,7 @@ jobs:
             --arg wa_verify_token "$WA_VERIFY_TOKEN" \
             --arg oci_queue_id "$OCI_QUEUE_ID" \
             --arg oci_dlq_id "$OCI_DLQ_ID" \
+            --arg oci_queue_endpoint "$OCI_QUEUE_ENDPOINT" \
             --arg oci_tenancy_id "$OCI_TENANCY_ID" \
             --arg oci_user_id "$OCI_USER_ID" \
             --arg oci_fingerprint "$OCI_FINGERPRINT" \
@@ -153,6 +158,7 @@ jobs:
               WHATSAPP_VERIFY_TOKEN: $wa_verify_token,
               OCI_QUEUE_ID: $oci_queue_id,
               OCI_DLQ_ID: $oci_dlq_id,
+              OCI_QUEUE_ENDPOINT: $oci_queue_endpoint,
               OCI_TENANCY_ID: $oci_tenancy_id,
               OCI_USER_ID: $oci_user_id,
               OCI_FINGERPRINT: $oci_fingerprint,
