@@ -127,9 +127,12 @@ runs:
         data:
         YAML_EOF
           
-          # Encode each value to base64 and append (handles multiline values like PEM keys)
-          jq -r 'to_entries[] | "\(.key) \(.value)"' "$TMPFILE" | while IFS=' ' read -r key value; do
-            encoded=$(echo -n "$value" | base64 -w 0)
+          # Encode each value to base64 and append.
+          # IMPORTANT: use jq @base64 to encode values — do NOT pipe through
+          # "while read" because read is line-based and will truncate multiline
+          # values like PEM private keys at the first newline.
+          jq -r 'to_entries[] | "\(.key) \(.value | @base64)"' "$TMPFILE" | \
+          while IFS=' ' read -r key encoded; do
             echo "  ${key}: ${encoded}" >> "$SECRET_YAML"
           done
           
