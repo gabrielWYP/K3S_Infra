@@ -1,0 +1,29 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: businessbot
+
+resources:
+  - ../../base
+
+namePrefix: queue-consumer-
+
+labels:
+  - pairs:
+      app: queue-consumer
+      component: pipeline
+      version: v1
+    includeSelectors: true
+
+patches:
+  - path: deployment-patch.yaml
+    target:
+      kind: Deployment
+      name: microservice-base
+  - path: service-patch.yaml
+
+images:
+  - name: ghcr.io/gabrielwyp/business-bot-microservice
+    newName: ghcr.io/gabrielwyp/businessbot-queue-consumer
+    newTag: latest

@@ -1,0 +1,59 @@
+---
+- op: replace
+  path: /spec/replicas
+  value: 2
+- op: add
+  path: /spec/template/spec/terminationGracePeriodSeconds
+  value: 45
+- op: replace
+  path: /spec/template/spec/containers/0/ports
+  value:
+    - name: http
+      containerPort: 3005
+- op: replace
+  path: /spec/template/spec/containers/0/env
+  value:
+    - name: SERVICE_NAME
+      value: "queue-consumer"
+    - name: PORT
+      value: "3005"
+- op: replace
+  path: /spec/template/spec/containers/0/startupProbe
+  value:
+    httpGet:
+      path: /health
+      port: 3005
+    failureThreshold: 30
+    periodSeconds: 5
+- op: replace
+  path: /spec/template/spec/containers/0/readinessProbe
+  value:
+    httpGet:
+      path: /ready
+      port: 3005
+    initialDelaySeconds: 15
+    periodSeconds: 10
+- op: replace
+  path: /spec/template/spec/containers/0/livenessProbe
+  value:
+    httpGet:
+      path: /health
+      port: 3005
+    initialDelaySeconds: 30
+    periodSeconds: 30
+- op: replace
+  path: /spec/template/spec/containers/0/envFrom
+  value:
+    - configMapRef:
+        name: business-bot-config
+    - secretRef:
+        name: queue-consumer-secrets
+- op: replace
+  path: /spec/template/spec/containers/0/resources
+  value:
+    requests:
+      memory: "256Mi"
+      cpu: "200m"
+    limits:
+      memory: "768Mi"
+      cpu: "750m"
