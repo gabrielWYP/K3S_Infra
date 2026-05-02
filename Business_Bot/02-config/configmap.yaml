@@ -20,7 +20,13 @@ data:
   NAMESPACE: "businessbot"
 
   # Service Discovery - Internal URLs
-  WHATSAPP_GATEWAY_URL: "http://whatsapp-gateway-service:3000"
+  # Each service reads only the URLs it needs from here.
+  WHATSAPP_GATEWAY_URL: "http://whatsapp-gateway-microservice-base-service:80"
+  AUDIO_PROCESSOR_URL: "http://audio-processor-microservice-base-service:80"
+  ROUTER_SERVICE_URL: "http://router-microservice-base-service:80"
+  TOOL_EXECUTOR_URL: "http://tool-executor-microservice-base-service:80"
+  RESPONSE_GENERATOR_URL: "http://response-generator-microservice-base-service:80"
+
   # Default Service Configuration
   DEFAULT_TIMEOUT: "30"
   MAX_RETRIES: "3"
