@@ -23,10 +23,10 @@ on:
         description: 'Groq API key for Whisper transcription'
         required: true
       WHATSAPP_ACCESS_TOKEN:
-        description: 'WhatsApp Cloud API access token'
+        description: 'WhatsApp API access token — required to download audio from Meta CDN'
         required: true
       WHATSAPP_API_URL:
-        description: 'WhatsApp Cloud API URL (e.g. https://graph.facebook.com/v15.0/your_phone_number_id/messages)'
+        description: 'WhatsApp API base URL (e.g. https://graph.facebook.com/v18.0)'
         required: true
 
 env:
@@ -88,16 +88,27 @@ jobs:
           echo "Preparing Audio Processor secrets JSON..."
 
           GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}"
+          WHATSAPP_ACCESS_TOKEN="${{ secrets.WHATSAPP_ACCESS_TOKEN }}"
+          WHATSAPP_API_URL="${{ secrets.WHATSAPP_API_URL }}"
 
           if [ -z "$GROQ_API_KEY" ]; then
             echo "::error::Missing required secret: GROQ_API_KEY"
             exit 1
           fi
 
+          if [ -z "$WHATSAPP_ACCESS_TOKEN" ] || [ -z "$WHATSAPP_API_URL" ]; then
+            echo "::error::Missing required WhatsApp secrets (WHATSAPP_ACCESS_TOKEN, WHATSAPP_API_URL)"
+            exit 1
+          fi
+
           SECRETS_JSON=$(jq -cn \
             --arg groq_api_key "$GROQ_API_KEY" \
+            --arg whatsapp_access_token "$WHATSAPP_ACCESS_TOKEN" \
+            --arg whatsapp_api_url "$WHATSAPP_API_URL" \
             '{
-              GROQ_API_KEY: $groq_api_key
+              GROQ_API_KEY: $groq_api_key,
+              WHATSAPP_ACCESS_TOKEN: $whatsapp_access_token,
+              WHATSAPP_API_URL: $whatsapp_api_url
             }')
 
           {
