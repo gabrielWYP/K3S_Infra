@@ -108,7 +108,6 @@ jobs:
         run: |
           echo "Preparing Queue Consumer secrets JSON..."
 
-          GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}"
           OCI_QUEUE_ID="${{ secrets.OCI_QUEUE_ID }}"
           OCI_DLQ_ID="${{ secrets.OCI_DLQ_ID }}"
           OCI_QUEUE_ENDPOINT="${{ secrets.OCI_QUEUE_ENDPOINT }}"
@@ -119,11 +118,6 @@ jobs:
           ORACLE_USER="${{ secrets.ORACLE_USER }}"
           ORACLE_PASSWORD="${{ secrets.ORACLE_PASSWORD }}"
           ORACLE_CONNECTION_STRING="${{ secrets.ORACLE_CONNECTION_STRING }}"
-
-          if [ -z "$GROQ_API_KEY" ]; then
-            echo "::error::Missing required secret: GROQ_API_KEY"
-            exit 1
-          fi
 
           if [ -z "$OCI_QUEUE_ID" ] || [ -z "$OCI_DLQ_ID" ] || [ -z "$OCI_QUEUE_ENDPOINT" ] || \
              [ -z "$OCI_TENANCY_ID" ] || [ -z "$OCI_USER_ID" ] || [ -z "$OCI_FINGERPRINT" ] || \
@@ -138,7 +132,6 @@ jobs:
           fi
 
           SECRETS_JSON=$(jq -cn \
-            --arg groq_api_key "$GROQ_API_KEY" \
             --arg oci_queue_id "$OCI_QUEUE_ID" \
             --arg oci_dlq_id "$OCI_DLQ_ID" \
             --arg oci_queue_endpoint "$OCI_QUEUE_ENDPOINT" \
@@ -150,7 +143,6 @@ jobs:
             --arg oracle_password "$ORACLE_PASSWORD" \
             --arg oracle_connection_string "$ORACLE_CONNECTION_STRING" \
             '{
-              GROQ_API_KEY: $groq_api_key,
               OCI_QUEUE_ID: $oci_queue_id,
               OCI_DLQ_ID: $oci_dlq_id,
               OCI_QUEUE_ENDPOINT: $oci_queue_endpoint,
