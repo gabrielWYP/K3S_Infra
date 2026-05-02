@@ -1,0 +1,165 @@
+name: BB - Deploy Router
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: 'Image tag to deploy'
+        required: true
+        type: string
+      kube-namespace:
+        description: 'Kubernetes namespace'
+        default: 'businessbot'
+        required: false
+        type: string
+    secrets:
+      KUBECONFIG_B64:
+        description: 'Base64 encoded kubeconfig for K3S'
+        required: true
+      GHCR_PULL_TOKEN:
+        description: 'GitHub PAT with read:packages for pulling images from GHCR'
+        required: true
+      GROQ_API_KEY:
+        description: 'Groq API key for intent classification (llama-3.3-70b-versatile)'
+        required: true
+
+env:
+  MICROSERVICE_NAME: router
+  MANIFEST_PATH: Business_Bot/03-workloads/overlays/router
+  IMAGE_NAME: businessbot-router
+  CONTAINER_NAME: app
+  KUBE_DEPLOYMENT: router-microservice-base
+  PORT: '3002'
+
+jobs:
+  validate:
+    name: Validate Manifests
+    uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
+    with:
+      manifest-path: Business_Bot
+
+  pre-deploy-checks:
+    name: Pre-deploy Checks
+    runs-on: self-hosted
+    needs: validate
+    steps:
+      - name: Checkout K3S_Infra
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+
+          echo "Pre-deploy checks for Router..."
+
+          kubectl get namespace ${{ inputs.kube-namespace }} || {
+            echo "Namespace does not exist, will be created during deploy"
+          }
+
+          kubectl get deployment ${{ env.KUBE_DEPLOYMENT }} -n ${{ inputs.kube-namespace }} 2>/dev/null || {
+            echo "No existing deployment found, fresh deploy"
+          }
+
+  deploy-core:
+    name: Deploy Core
+    runs-on: self-hosted
+    needs: [validate, pre-deploy-checks]
+    steps:
+      - name: Checkout K3S_Infra
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Prepare Router secrets JSON
+        id: secrets-json
+        run: |
+          echo "Preparing Router secrets JSON..."
+
+          GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}"
+
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "::error::Missing required secret: GROQ_API_KEY"
+            exit 1
+          fi
+
+          SECRETS_JSON=$(jq -cn \
+            --arg groq_api_key "$GROQ_API_KEY" \
+            '{
+              GROQ_API_KEY: $groq_api_key
+            }')
+
+          {
+            echo "json<<SECRETS_EOF"
+            echo "$SECRETS_JSON"
+            echo "SECRETS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Secrets JSON prepared (values hidden for security)"
+
+      - name: Deploy to K3S
+        uses: ./.github/actions/bb-deploy-core/
+        with:
+          microservice-name: ${{ env.MICROSERVICE_NAME }}
+          image-tag: ${{ inputs.image-tag }}
+          kube-namespace: ${{ inputs.kube-namespace }}
+          manifest-path: ${{ env.MANIFEST_PATH }}
+          image-name: ${{ env.IMAGE_NAME }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          kube-deployment: ${{ env.KUBE_DEPLOYMENT }}
+          port: ${{ env.PORT }}
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          MICROSERVICE_SECRETS_JSON: ${{ steps.secrets-json.outputs.json }}
+
+  post-deploy-verification:
+    name: Post-deploy Verification
+    runs-on: self-hosted
+    needs: deploy-core
+    steps:
+      - name: Checkout K3S_Infra
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+
+      - name: Verify service
+        env:
+          KUBECONFIG: /tmp/kubeconfig
+        run: |
+          echo "Verifying Router service..."
+          kubectl get svc -n ${{ inputs.kube-namespace }} | grep ${{ env.MICROSERVICE_NAME }}
+          kubectl get pods -n ${{ inputs.kube-namespace }} -l app=${{ env.KUBE_DEPLOYMENT }}
+
+  notify-success:
+    name: Notify Success
+    runs-on: self-hosted
+    needs: post-deploy-verification
+    if: success()
+    steps:
+      - name: Deployment summary
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "  Router Deployment Complete"
+          echo "=========================================="
+          echo "  Microservice: ${{ env.MICROSERVICE_NAME }}"
+          echo "  Image Tag:    ${{ inputs.image-tag }}"
+          echo "  Namespace:    ${{ inputs.kube-namespace }}"
+          echo "  Port:         ${{ env.PORT }}"
+          echo ""
+          echo "  Internal URL: http://router-microservice-base-service:80"
+          echo "  Health check: kubectl port-forward -n ${{ inputs.kube-namespace }} deploy/${{ env.KUBE_DEPLOYMENT }} 3002:3002"
+          echo "=========================================="
