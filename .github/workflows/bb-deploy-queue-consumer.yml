@@ -19,9 +19,6 @@ on:
       GHCR_PULL_TOKEN:
         description: 'GitHub PAT with read:packages for pulling images from GHCR'
         required: true
-      GROQ_API_KEY:
-        description: 'Groq API key for Whisper (passed through to audio-processor)'
-        required: true
       OCI_QUEUE_ID:
         description: 'OCI Queue OCID'
         required: true

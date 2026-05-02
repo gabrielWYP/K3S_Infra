@@ -22,6 +22,12 @@ on:
       GROQ_API_KEY:
         description: 'Groq API key for Whisper transcription'
         required: true
+      WHATSAPP_ACCESS_TOKEN:
+        description: 'WhatsApp Cloud API access token'
+        required: true
+      WHATSAPP_API_URL:
+        description: 'WhatsApp Cloud API URL (e.g. https://graph.facebook.com/v15.0/your_phone_number_id/messages)'
+        required: true
 
 env:
   MICROSERVICE_NAME: audio-processor
