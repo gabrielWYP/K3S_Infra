@@ -1,0 +1,29 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: businessbot
+
+resources:
+  - ../../base
+
+namePrefix: tool-executor-
+
+labels:
+  - pairs:
+      app: tool-executor
+      component: tool-execution
+      version: v1
+    includeSelectors: true
+
+patches:
+  - path: deployment-patch.yaml
+    target:
+      kind: Deployment
+      name: microservice-base
+  - path: service-patch.yaml
+
+images:
+  - name: ghcr.io/gabrielwyp/business-bot-microservice
+    newName: ghcr.io/gabrielwyp/businessbot-tool-executor
+    newTag: latest

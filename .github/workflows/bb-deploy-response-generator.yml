@@ -1,0 +1,143 @@
+name: BB - Deploy Response Generator
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: 'Image tag to deploy'
+        required: true
+        type: string
+      kube-namespace:
+        description: 'Kubernetes namespace'
+        default: 'businessbot'
+        required: false
+        type: string
+    secrets:
+      KUBECONFIG_B64:
+        required: true
+      GHCR_PULL_TOKEN:
+        required: true
+      GROQ_API_KEY:
+        required: true
+      DEEPINFRA_API_KEY:
+        required: false
+
+env:
+  MICROSERVICE_NAME: response-generator
+  MANIFEST_PATH: Business_Bot/03-workloads/overlays/response-generator
+  IMAGE_NAME: businessbot-response-generator
+  CONTAINER_NAME: app
+  KUBE_DEPLOYMENT: response-generator-microservice-base
+  PORT: '3004'
+
+jobs:
+  validate:
+    name: Validate Manifests
+    uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
+    with:
+      manifest-path: Business_Bot
+
+  pre-deploy-checks:
+    name: Pre-deploy Checks
+    runs-on: self-hosted
+    needs: validate
+    steps:
+      - name: Checkout K3S_Infra
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Setup kubeconfig
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          kubectl get namespace ${{ inputs.kube-namespace }} || echo "Namespace will be created"
+          kubectl get deployment ${{ env.KUBE_DEPLOYMENT }} -n ${{ inputs.kube-namespace }} 2>/dev/null || echo "Fresh deploy"
+
+  deploy-core:
+    name: Deploy Core
+    runs-on: self-hosted
+    needs: [validate, pre-deploy-checks]
+    steps:
+      - name: Checkout K3S_Infra
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Prepare Response Generator secrets JSON
+        id: secrets-json
+        run: |
+          GROQ_API_KEY="${{ secrets.GROQ_API_KEY }}"
+          DEEPINFRA_API_KEY="${{ secrets.DEEPINFRA_API_KEY }}"
+
+          if [ -z "$GROQ_API_KEY" ]; then
+            echo "::error::Missing required secret: GROQ_API_KEY"
+            exit 1
+          fi
+
+          SECRETS_JSON=$(jq -cn \
+            --arg groq_api_key "$GROQ_API_KEY" \
+            --arg deepinfra_api_key "$DEEPINFRA_API_KEY" \
+            '{
+              GROQ_API_KEY: $groq_api_key,
+              DEEPINFRA_API_KEY: $deepinfra_api_key
+            }')
+
+          {
+            echo "json<<SECRETS_EOF"
+            echo "$SECRETS_JSON"
+            echo "SECRETS_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to K3S
+        uses: ./.github/actions/bb-deploy-core/
+        with:
+          microservice-name: ${{ env.MICROSERVICE_NAME }}
+          image-tag: ${{ inputs.image-tag }}
+          kube-namespace: ${{ inputs.kube-namespace }}
+          manifest-path: ${{ env.MANIFEST_PATH }}
+          image-name: ${{ env.IMAGE_NAME }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          kube-deployment: ${{ env.KUBE_DEPLOYMENT }}
+          port: ${{ env.PORT }}
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          MICROSERVICE_SECRETS_JSON: ${{ steps.secrets-json.outputs.json }}
+
+  post-deploy-verification:
+    name: Post-deploy Verification
+    runs-on: self-hosted
+    needs: deploy-core
+    steps:
+      - name: Checkout K3S_Infra
+        uses: actions/checkout@v4
+        with:
+          repository: gabrielwyp/K3S_Infra
+
+      - name: Verify service
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          echo "$KUBECONFIG_B64" | base64 -d > /tmp/kubeconfig
+          chmod 600 /tmp/kubeconfig
+          export KUBECONFIG=/tmp/kubeconfig
+          kubectl get svc -n ${{ inputs.kube-namespace }} | grep ${{ env.MICROSERVICE_NAME }}
+          kubectl get pods -n ${{ inputs.kube-namespace }} -l app=${{ env.KUBE_DEPLOYMENT }}
+
+  notify-success:
+    name: Notify Success
+    runs-on: self-hosted
+    needs: post-deploy-verification
+    if: success()
+    steps:
+      - name: Deployment summary
+        run: |
+          echo "=========================================="
+          echo "  Response Generator Deployment Complete"
+          echo "  Internal URL: http://response-generator-microservice-base-service:80"
+          echo "  Health: kubectl port-forward -n ${{ inputs.kube-namespace }} deploy/${{ env.KUBE_DEPLOYMENT }} 3004:3004"
+          echo "=========================================="
