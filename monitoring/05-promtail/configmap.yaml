@@ -31,7 +31,6 @@ data:
 
     clients:
       - url: http://loki.monitoring:3100/loki/api/v1/push
-        tenant_id: ""
         backoff_config:
           min_period: 500ms
           max_period: 5m
@@ -39,74 +38,61 @@ data:
 
     scrape_configs:
       # -----------------------------------------------------------------------
-      # businessbot namespace — all pods
+      # Scrape all pod logs directly from the filesystem.
+      # K3S stores logs at /var/log/pods/<namespace>_<pod>_<uid>/<container>/*.log
+      # Using static_configs + file glob is more reliable than kubernetes_sd_configs
+      # on single-node K3S — no service discovery timing issues.
       # -----------------------------------------------------------------------
-      - job_name: businessbot
-        kubernetes_sd_configs:
-          - role: pod
-            namespaces:
-              names:
-                - businessbot
-        pipeline_stages:
-          # Unwrap containerd log envelope
-          - cri: {}
-          # Parse Winston JSON payload
-          - json:
-              expressions:
-                level:      level
-                message:    message
-                service:    service
-                request_id: requestId
-                ts:         timestamp
-          # Promote low-cardinality fields to stream labels
-          - labels:
-              level:   ""
-              service: ""
-          # Structured metadata for high-cardinality fields (Loki 3.x)
-          - structured_metadata:
-              request_id: ""
-          # Use Winston timestamp as the log timestamp
-          - timestamp:
-              source: ts
-              format: RFC3339Nano
-              fallback_formats:
-                - "2006-01-02T15:04:05.999Z07:00"
-          # Drop the extracted fields from the log line to avoid duplication
-          - labeldrop:
-              - filename
-        relabel_configs:
-          - source_labels:
-              - __meta_kubernetes_pod_label_app
-            target_label: app
-          - source_labels:
-              - __meta_kubernetes_namespace
-            target_label: namespace
-          - source_labels:
-              - __meta_kubernetes_pod_name
-            target_label: pod
-          - source_labels:
-              - __meta_kubernetes_pod_container_name
-            target_label: container
+      - job_name: kubernetes-pods
+        static_configs:
+          - targets:
+              - localhost
+            labels:
+              job: kubernetes-pods
+              __path__: /var/log/pods/*/*/*.log
 
-      # -----------------------------------------------------------------------
-      # monitoring namespace — Loki, Grafana, Prometheus self-logs
-      # -----------------------------------------------------------------------
-      - job_name: monitoring
-        kubernetes_sd_configs:
-          - role: pod
-            namespaces:
-              names:
-                - monitoring
         pipeline_stages:
+          # Unwrap containerd/CRI log envelope:
+          # {"log":"...\n","stream":"stdout","time":"..."}
           - cri: {}
-          # monitoring pods log in mixed formats — just ingest as-is
-        relabel_configs:
-          - source_labels:
-              - __meta_kubernetes_pod_label_app
-            target_label: app
-          - source_labels:
-              - __meta_kubernetes_namespace
-            target_label: namespace
-          - source_labels:
-              - __meta_kubernetes_pod_name
-            target_label: pod
+
+          # Extract namespace, pod, container from the file path.
+          # Path format: /var/log/pods/<namespace>_<pod>_<uid>/<container>/0.log
+          - regex:
+              expression: '/var/log/pods/(?P<namespace>[^_]+)_(?P<pod>[^_]+)_[^/]+/(?P<container>[^/]+)/.*'
+              source: filename
+
+          # Only keep businessbot and monitoring namespaces
+          - match:
+              selector: '{namespace=~"businessbot|monitoring"}'
+              stages:
+                # Parse Winston JSON log line
+                - json:
+                    expressions:
+                      level:      level
+                      message:    message
+                      service:    service
+                      request_id: requestId
+                      ts:         timestamp
+                # Promote low-cardinality fields to stream labels
+                - labels:
+                    level:     ""
+                    service:   ""
+                # Use Winston timestamp
+                - timestamp:
+                    source: ts
+                    format: RFC3339Nano
+                    fallback_formats:
+                      - "2006-01-02T15:04:05.999Z07:00"
+
+          # Always promote namespace, pod, container as labels
+          - labels:
+              namespace: ""
+              pod:       ""
+              container: ""
+
+          # Drop pods from namespaces we don't care about
+          - match:
+              selector: '{namespace!~"businessbot|monitoring"}'
+              action: drop
+
