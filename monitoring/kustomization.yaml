@@ -6,3 +6,12 @@ resources:
   - 01-PV/storageclass.yaml
   - 02-config/namespace.yaml
   - 03-serviceMonitor/serviceMonitor.yaml
+  - 04-loki/pv.yaml
+  - 04-loki/pvc.yaml
+  - 04-loki/configmap.yaml
+  - 04-loki/deployment.yaml
+  - 04-loki/service.yaml
+  - 04-loki/grafana-datasource.yaml
+  - 05-promtail/rbac.yaml
+  - 05-promtail/configmap.yaml
+  - 05-promtail/daemonset.yaml

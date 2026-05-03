@@ -1,0 +1,112 @@
+# Promtail configuration
+# Scrapes container logs from /var/log/pods/ on the node.
+# Pipeline stages:
+#   1. docker{}   — unwrap the Docker/containerd log envelope (stream, time, log fields)
+#   2. json{}     — parse the inner JSON log line (Winston format)
+#   3. labels{}   — promote level, service, requestId to Loki stream labels
+#   4. timestamp  — use the Winston timestamp, not the containerd wrapper time
+#
+# Label cardinality note:
+#   requestId has HIGH cardinality (UUID per request) — it is extracted as a
+#   structured metadata field, NOT as a stream label. Loki stream labels must
+#   be low-cardinality (level, service, namespace, pod). High-cardinality
+#   values go into the log line or structured_metadata.
+#   See: https://grafana.com/docs/loki/latest/get-started/labels/
+#
+# Namespace filter: only businessbot and monitoring — ignores kube-system noise.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: monitoring
+data:
+  promtail.yaml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+      log_level: warn
+
+    positions:
+      filename: /run/promtail/positions.yaml
+
+    clients:
+      - url: http://loki.monitoring:3100/loki/api/v1/push
+        tenant_id: ""
+        backoff_config:
+          min_period: 500ms
+          max_period: 5m
+          max_retries: 10
+
+    scrape_configs:
+      # -----------------------------------------------------------------------
+      # businessbot namespace — all pods
+      # -----------------------------------------------------------------------
+      - job_name: businessbot
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - businessbot
+        pipeline_stages:
+          # Unwrap containerd log envelope
+          - cri: {}
+          # Parse Winston JSON payload
+          - json:
+              expressions:
+                level:      level
+                message:    message
+                service:    service
+                request_id: requestId
+                ts:         timestamp
+          # Promote low-cardinality fields to stream labels
+          - labels:
+              level:   ""
+              service: ""
+          # Structured metadata for high-cardinality fields (Loki 3.x)
+          - structured_metadata:
+              request_id: ""
+          # Use Winston timestamp as the log timestamp
+          - timestamp:
+              source: ts
+              format: RFC3339Nano
+              fallback_formats:
+                - "2006-01-02T15:04:05.999Z07:00"
+          # Drop the extracted fields from the log line to avoid duplication
+          - labeldrop:
+              - filename
+        relabel_configs:
+          - source_labels:
+              - __meta_kubernetes_pod_label_app
+            target_label: app
+          - source_labels:
+              - __meta_kubernetes_namespace
+            target_label: namespace
+          - source_labels:
+              - __meta_kubernetes_pod_name
+            target_label: pod
+          - source_labels:
+              - __meta_kubernetes_pod_container_name
+            target_label: container
+
+      # -----------------------------------------------------------------------
+      # monitoring namespace — Loki, Grafana, Prometheus self-logs
+      # -----------------------------------------------------------------------
+      - job_name: monitoring
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - monitoring
+        pipeline_stages:
+          - cri: {}
+          # monitoring pods log in mixed formats — just ingest as-is
+        relabel_configs:
+          - source_labels:
+              - __meta_kubernetes_pod_label_app
+            target_label: app
+          - source_labels:
+              - __meta_kubernetes_namespace
+            target_label: namespace
+          - source_labels:
+              - __meta_kubernetes_pod_name
+            target_label: pod

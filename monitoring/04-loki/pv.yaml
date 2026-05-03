@@ -1,0 +1,28 @@
+# PersistentVolume for Loki log chunks
+# Path: /mnt/tesis_data/loki — same disk as Prometheus, separate directory.
+# Capacity: 2Gi is generous for 24h retention of JSON logs from 6 services.
+# At ~1KB/log line, 6 services × ~500 lines/hour × 24h ≈ 72MB raw.
+# Loki compresses chunks ~10x → ~7MB/day. 2Gi gives 280 days of headroom
+# even without the 24h retention policy enforced by Loki itself.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: loki-pv-static
+spec:
+  capacity:
+    storage: 2Gi
+  volumeMode: Filesystem
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  local:
+    path: /mnt/tesis_data/loki
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - gabo-vm-arm

@@ -1,0 +1,73 @@
+# Loki configuration — single-binary mode (monolithic)
+# Appropriate for single-node K3S with local-path storage.
+# Distributed mode (microservices) requires object storage (S3/MinIO) — overkill here.
+#
+# Retention: 24h enforced via compactor.retention_enabled + limits_config.
+# Storage: filesystem backend — chunks and index on the same PV.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: monitoring
+data:
+  loki.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+      grpc_listen_port: 9096
+      log_level: warn
+
+    common:
+      instance_addr: 127.0.0.1
+      path_prefix: /loki
+      storage:
+        filesystem:
+          chunks_directory: /loki/chunks
+          rules_directory:  /loki/rules
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+
+    query_range:
+      results_cache:
+        cache:
+          embedded_cache:
+            enabled: true
+            max_size_mb: 64
+
+    schema_config:
+      configs:
+        - from: "2024-01-01"
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    ruler:
+      alertmanager_url: http://prometheus-kube-prometheus-alertmanager.monitoring:9093
+
+    # Retention — enforced by the compactor.
+    # retention_period must match or exceed the index period (24h).
+    limits_config:
+      retention_period: 24h
+      # Reject logs older than 1h to avoid backfill bloating the index.
+      reject_old_samples: true
+      reject_old_samples_max_age: 1h
+      # Per-stream rate limits — generous for dev/MVP.
+      ingestion_rate_mb: 4
+      ingestion_burst_size_mb: 8
+
+    compactor:
+      working_directory: /loki/compactor
+      compaction_interval: 10m
+      retention_enabled: true
+      retention_delete_delay: 2h
+      retention_delete_worker_count: 1
+      delete_request_store: filesystem
+
+    analytics:
+      reporting_enabled: false
