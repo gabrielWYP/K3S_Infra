@@ -24,7 +24,8 @@ spec:
         kubernetes.io/hostname: gabo-vm-arm
       initContainers:
         # Ensure the PV directories exist and are writable by the Loki user.
-        # local-path provisioner creates the root dir but not subdirectories.
+        # Runs as the same UID as the main container (10001) — no root needed.
+        # fsGroup: 10001 in securityContext ensures the PV is group-writable.
         - name: init-dirs
           image: busybox:1.36
           command:
@@ -32,12 +33,9 @@ spec:
             - -c
             - |
               mkdir -p /loki/chunks /loki/rules /loki/compactor
-              chown -R 10001:10001 /loki
           volumeMounts:
             - name: loki-storage
               mountPath: /loki
-          securityContext:
-            runAsUser: 0
       containers:
         - name: loki
           image: grafana/loki:3.4.2
