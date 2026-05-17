@@ -26,6 +26,7 @@ data:
   ROUTER_SERVICE_URL: "http://router-microservice-base-service:80"
   TOOL_EXECUTOR_URL: "http://tool-executor-microservice-base-service:80"
   RESPONSE_GENERATOR_URL: "http://response-generator-microservice-base-service:80"
+  IMAGE_PROCESSOR_URL: "http://image-processor-microservice-base-service:80"
 
   # Default Service Configuration
   DEFAULT_TIMEOUT: "30"
