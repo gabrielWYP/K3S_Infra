@@ -28,13 +28,13 @@ on:
       WHATSAPP_API_URL:
         description: 'WhatsApp API base URL (e.g. https://graph.facebook.com/v18.0)'
         required: true
-      DB_USER:
+      ORACLE_USER:
         description: 'Oracle DB username'
         required: true
-      DB_PASSWORD:
+      ORACLE_PASSWORD:
         description: 'Oracle DB password'
         required: true
-      DB_CONNECTION_STRING:
+      ORACLE_CONNECTION_STRING:
         description: 'Oracle DB connection string'
         required: true
 
@@ -99,9 +99,9 @@ jobs:
           GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}"
           WHATSAPP_ACCESS_TOKEN="${{ secrets.WHATSAPP_ACCESS_TOKEN }}"
           WHATSAPP_API_URL="${{ secrets.WHATSAPP_API_URL }}"
-          DB_USER="${{ secrets.DB_USER }}"
-          DB_PASSWORD="${{ secrets.DB_PASSWORD }}"
-          DB_CONNECTION_STRING="${{ secrets.DB_CONNECTION_STRING }}"
+          ORACLE_USER="${{ secrets.ORACLE_USER }}"
+          ORACLE_PASSWORD="${{ secrets.ORACLE_PASSWORD }}"
+          ORACLE_CONNECTION_STRING="${{ secrets.ORACLE_CONNECTION_STRING }}"
 
           if [ -z "$GEMINI_API_KEY" ]; then
             echo "::error::Missing required secret: GEMINI_API_KEY"
@@ -113,8 +113,8 @@ jobs:
             exit 1
           fi
 
-          if [ -z "$DB_USER" ] || [ -z "$DB_PASSWORD" ] || [ -z "$DB_CONNECTION_STRING" ]; then
-            echo "::error::Missing required Oracle DB secrets (DB_USER, DB_PASSWORD, DB_CONNECTION_STRING)"
+          if [ -z "$ORACLE_USER" ] || [ -z "$ORACLE_PASSWORD" ] || [ -z "$ORACLE_CONNECTION_STRING" ]; then
+            echo "::error::Missing required Oracle DB secrets (ORACLE_USER, ORACLE_PASSWORD, ORACLE_CONNECTION_STRING)"
             exit 1
           fi
 
@@ -122,16 +122,16 @@ jobs:
             --arg gemini_api_key "$GEMINI_API_KEY" \
             --arg whatsapp_access_token "$WHATSAPP_ACCESS_TOKEN" \
             --arg whatsapp_api_url "$WHATSAPP_API_URL" \
-            --arg db_user "$DB_USER" \
-            --arg db_password "$DB_PASSWORD" \
-            --arg db_connection_string "$DB_CONNECTION_STRING" \
+            --arg db_user "$ORACLE_USER" \
+            --arg db_password "$ORACLE_PASSWORD" \
+            --arg db_connection_string "$ORACLE_CONNECTION_STRING" \
             '{
               GEMINI_API_KEY: $gemini_api_key,
               WHATSAPP_ACCESS_TOKEN: $whatsapp_access_token,
               WHATSAPP_API_URL: $whatsapp_api_url,
-              DB_USER: $db_user,
-              DB_PASSWORD: $db_password,
-              DB_CONNECTION_STRING: $db_connection_string
+              ORACLE_USER: $db_user,
+              ORACLE_PASSWORD: $db_password,
+              ORACLE_CONNECTION_STRING: $db_connection_string
             }')
 
           {
