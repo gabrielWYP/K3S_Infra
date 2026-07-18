@@ -1,0 +1,226 @@
+name: Deploy Asistente Proveedor
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: Immutable API and web image tag
+        required: true
+        type: string
+      kube-namespace:
+        description: Kubernetes namespace
+        required: false
+        default: asistente-proveedor
+        type: string
+      public-host:
+        description: Public Traefik host
+        required: false
+        default: asistente-proveedor.ikigais.app
+        type: string
+    secrets:
+      KUBECONFIG_B64:
+        required: true
+      GHCR_PULL_TOKEN:
+        required: true
+      ORACLE_DSN:
+        required: true
+      ORACLE_USER:
+        required: true
+      ORACLE_PASSWORD:
+        required: true
+      JWT_SECRET_KEY:
+        required: true
+      OWNER_EMAIL:
+        required: true
+      OWNER_PASSWORD:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-asistente-proveedor-${{ inputs.kube-namespace }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate manifests
+    uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
+    with:
+      manifest-path: Asistente_Proveedor
+
+  deploy:
+    name: Deploy to K3S
+    needs: validate
+    runs-on: self-hosted
+    env:
+      KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+      PUBLIC_HOST: ${{ inputs.public-host }}
+      IMAGE_TAG: ${{ inputs.image-tag }}
+      KUBECONFIG: /tmp/asistente-proveedor-kubeconfig-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v6
+        with:
+          repository: gabrielwyp/K3S_Infra
+          ref: main
+
+      - name: Validate deployment inputs
+        env:
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          ORACLE_DSN: ${{ secrets.ORACLE_DSN }}
+          ORACLE_USER: ${{ secrets.ORACLE_USER }}
+          ORACLE_PASSWORD: ${{ secrets.ORACLE_PASSWORD }}
+          OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
+          OWNER_PASSWORD: ${{ secrets.OWNER_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test "${PUBLIC_HOST}" = "asistente-proveedor.ikigais.app" || {
+            echo "::error::public-host must be asistente-proveedor.ikigais.app"
+            exit 1
+          }
+          [[ "${IMAGE_TAG}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] || {
+            echo "::error::Invalid OCI image tag"
+            exit 1
+          }
+          for name in KUBECONFIG_B64 GHCR_PULL_TOKEN ORACLE_DSN ORACLE_USER \
+            ORACLE_PASSWORD JWT_SECRET_KEY OWNER_EMAIL OWNER_PASSWORD; do
+            test -n "${!name:-}" || {
+              echo "::error::Missing required secret: ${name}"
+              exit 1
+            }
+          done
+          test "${#JWT_SECRET_KEY}" -ge 32 || {
+            echo "::error::JWT_SECRET_KEY must contain at least 32 characters"
+            exit 1
+          }
+
+      - name: Configure K3S access
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "${KUBECONFIG_B64}" | base64 --decode > "${KUBECONFIG}"
+          kubectl cluster-info
+          kubectl create namespace "${KUBE_NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Reconcile runtime secrets
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          ORACLE_DSN: ${{ secrets.ORACLE_DSN }}
+          ORACLE_USER: ${{ secrets.ORACLE_USER }}
+          ORACLE_PASSWORD: ${{ secrets.ORACLE_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          OWNER_EMAIL: ${{ secrets.OWNER_EMAIL }}
+          OWNER_PASSWORD: ${{ secrets.OWNER_PASSWORD }}
+          GHCR_USER: gabrielwyp
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          trap 'rm -rf "${secret_dir}"' EXIT
+          chmod 700 "${secret_dir}"
+
+          printf '%s' "${ORACLE_DSN}" > "${secret_dir}/ORACLE_DSN"
+          printf '%s' "${ORACLE_USER}" > "${secret_dir}/ORACLE_USER"
+          printf '%s' "${ORACLE_PASSWORD}" > "${secret_dir}/ORACLE_PASSWORD"
+          printf '%s' "${JWT_SECRET_KEY}" > "${secret_dir}/JWT_SECRET_KEY"
+          kubectl create secret generic asistente-proveedor-runtime \
+            --from-file=ORACLE_DSN="${secret_dir}/ORACLE_DSN" \
+            --from-file=ORACLE_USER="${secret_dir}/ORACLE_USER" \
+            --from-file=ORACLE_PASSWORD="${secret_dir}/ORACLE_PASSWORD" \
+            --from-file=JWT_SECRET_KEY="${secret_dir}/JWT_SECRET_KEY" \
+            --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
+            | kubectl apply -f -
+
+          printf '%s' "${OWNER_EMAIL}" > "${secret_dir}/OWNER_EMAIL"
+          printf '%s' "${OWNER_PASSWORD}" > "${secret_dir}/OWNER_PASSWORD"
+          kubectl create secret generic asistente-proveedor-bootstrap \
+            --from-file=OWNER_EMAIL="${secret_dir}/OWNER_EMAIL" \
+            --from-file=OWNER_PASSWORD="${secret_dir}/OWNER_PASSWORD" \
+            --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
+            | kubectl apply -f -
+
+          export GHCR_AUTH
+          GHCR_AUTH="$(printf '%s:%s' "${GHCR_USER}" "${GHCR_PULL_TOKEN}" | base64 | tr -d '\n')"
+          jq --null-input \
+            '{auths:{"ghcr.io":{username:env.GHCR_USER,password:env.GHCR_PULL_TOKEN,auth:env.GHCR_AUTH}}}' \
+            > "${secret_dir}/.dockerconfigjson"
+          kubectl create secret generic ghcr-pull-secret \
+            --type=kubernetes.io/dockerconfigjson \
+            --from-file=.dockerconfigjson="${secret_dir}/.dockerconfigjson" \
+            --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
+            | kubectl apply -f -
+
+      - name: Apply immutable release
+        run: |
+          set -euo pipefail
+          sed -i "s/newTag: bootstrap/newTag: ${IMAGE_TAG}/g" \
+            Asistente_Proveedor/kustomization.yaml
+          kubectl delete job asistente-proveedor-owner-bootstrap \
+            --namespace "${KUBE_NAMESPACE}" --ignore-not-found
+          kubectl apply -k Asistente_Proveedor
+
+      - name: Wait for application rollout
+        run: |
+          set -euo pipefail
+          rollback() {
+            kubectl rollout undo deployment/asistente-proveedor-api \
+              --namespace "${KUBE_NAMESPACE}" || true
+            kubectl rollout undo deployment/asistente-proveedor-web \
+              --namespace "${KUBE_NAMESPACE}" || true
+          }
+          trap rollback ERR
+          kubectl rollout status deployment/asistente-proveedor-api \
+            --namespace "${KUBE_NAMESPACE}" --timeout=8m
+          kubectl rollout status deployment/asistente-proveedor-web \
+            --namespace "${KUBE_NAMESPACE}" --timeout=8m
+          trap - ERR
+
+      - name: Bootstrap owner idempotently
+        run: |
+          set -euo pipefail
+          kubectl patch job asistente-proveedor-owner-bootstrap \
+            --namespace "${KUBE_NAMESPACE}" --type merge \
+            --patch '{"spec":{"suspend":false}}'
+          kubectl wait job/asistente-proveedor-owner-bootstrap \
+            --namespace "${KUBE_NAMESPACE}" --for=condition=complete --timeout=5m || {
+              kubectl logs job/asistente-proveedor-owner-bootstrap \
+                --namespace "${KUBE_NAMESPACE}" --all-containers --prefix || true
+              exit 1
+            }
+
+      - name: Verify internal health
+        run: |
+          set -euo pipefail
+          kubectl run asistente-proveedor-health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
+            --namespace "${KUBE_NAMESPACE}" --rm --restart=Never \
+            --image=curlimages/curl:8.16.0 --attach --quiet -- \
+            --fail --silent --show-error \
+            http://asistente-proveedor-web:3000/api/health
+
+      - name: Verify public Host routing
+        run: |
+          set -euo pipefail
+          response="$(curl --fail --silent --show-error \
+            --retry 6 --retry-delay 5 --retry-all-errors \
+            "https://${PUBLIC_HOST}/api/health")"
+          test "$(jq -r '.status // empty' <<< "${response}")" = "ok" || {
+            echo "::error::Public health endpoint returned an unexpected payload"
+            exit 1
+          }
+
+      - name: Deployment diagnostics
+        if: failure()
+        run: |
+          kubectl get deployments,pods,services,ingressroutes,jobs \
+            --namespace "${KUBE_NAMESPACE}" -o wide || true
+          kubectl get events --namespace "${KUBE_NAMESPACE}" \
+            --sort-by='.lastTimestamp' | tail -30 || true
+
+      - name: Remove kubeconfig
+        if: always()
+        run: rm -f "${KUBECONFIG}"
