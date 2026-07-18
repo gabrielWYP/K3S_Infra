@@ -1,0 +1,68 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: asistente-proveedor-owner-bootstrap
+  labels:
+    app.kubernetes.io/name: asistente-proveedor
+    app.kubernetes.io/component: bootstrap
+spec:
+  suspend: true
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: asistente-proveedor
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: Never
+      serviceAccountName: asistente-proveedor
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: owner-bootstrap
+          image: ghcr.io/gabrielwyp/asistente-proveedor-api:bootstrap
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - -m
+            - app.cli
+          args:
+            - create-owner
+            - --email
+            - $(OWNER_EMAIL)
+          envFrom:
+            - configMapRef:
+                name: asistente-proveedor-config
+            - secretRef:
+                name: asistente-proveedor-runtime
+            - secretRef:
+                name: asistente-proveedor-bootstrap
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

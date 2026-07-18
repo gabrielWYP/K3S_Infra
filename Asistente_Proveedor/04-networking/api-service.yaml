@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: asistente-proveedor-api
+  labels:
+    app.kubernetes.io/name: asistente-proveedor
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: asistente-proveedor
+    app.kubernetes.io/component: api
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http
+      protocol: TCP

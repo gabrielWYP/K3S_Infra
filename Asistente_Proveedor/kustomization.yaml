@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: asistente-proveedor
+
+resources:
+  - 01-rbac/serviceaccount.yaml
+  - 02-config/configmap.yaml
+  - 03-workloads/api-deployment.yaml
+  - 03-workloads/web-deployment.yaml
+  - 03-workloads/owner-bootstrap-job.yaml
+  - 04-networking/api-service.yaml
+  - 04-networking/web-service.yaml
+  - 04-networking/ingressroute.yaml
+
+images:
+  - name: ghcr.io/gabrielwyp/asistente-proveedor-api
+    newName: ghcr.io/gabrielwyp/asistente-proveedor-api
+    newTag: bootstrap
+  - name: ghcr.io/gabrielwyp/asistente-proveedor-web
+    newName: ghcr.io/gabrielwyp/asistente-proveedor-web
+    newTag: bootstrap

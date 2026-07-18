@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: asistente-proveedor-config
+  labels:
+    app.kubernetes.io/name: asistente-proveedor
+data:
+  ACCESS_TOKEN_EXPIRE_MINUTES: "15"
+  API_ORIGIN: "http://asistente-proveedor-api:8000"
+  APP_ENV: "production"
+  APP_STORAGE_MODE: "oracle"
+  PYTHONDONTWRITEBYTECODE: "1"
+  PYTHONUNBUFFERED: "1"
