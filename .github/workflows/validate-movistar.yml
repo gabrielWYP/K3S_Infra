@@ -1,0 +1,55 @@
+name: Validate Movistar
+
+on:
+  pull_request:
+    paths:
+      - "Movistar/**"
+      - ".github/workflows/deploy-movistar.yml"
+      - ".github/workflows/validate-movistar.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-movistar-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manifests:
+    name: Render and validate manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v6
+
+      - name: Render Kustomize manifests
+        run: kubectl kustomize Movistar > "${RUNNER_TEMP}/movistar.yaml"
+
+      - name: Install kubeconform
+        env:
+          KUBECONFORM_VERSION: v0.6.7
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar --extract --gzip --directory "${RUNNER_TEMP}" kubeconform
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Validate Kubernetes schemas
+        run: |
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -summary \
+            "${RUNNER_TEMP}/movistar.yaml"
+
+      - name: Lint YAML
+        run: |
+          python -m pip install --disable-pip-version-check --quiet yamllint==1.37.1
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}}}' \
+            Movistar \
+            .github/workflows/deploy-movistar.yml \
+            .github/workflows/validate-movistar.yml

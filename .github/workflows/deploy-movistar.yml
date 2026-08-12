@@ -1,0 +1,158 @@
+name: Deploy Movistar
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: Immutable application image tag
+        required: true
+        type: string
+      kube-namespace:
+        description: Kubernetes namespace
+        required: false
+        default: reto-movistar
+        type: string
+      public-host:
+        description: Public Traefik host
+        required: false
+        default: reto-movistar.ikigais.app
+        type: string
+    secrets:
+      KUBECONFIG_B64:
+        required: true
+      GHCR_PULL_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-reto-movistar-${{ inputs.kube-namespace }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate manifests
+    uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
+    with:
+      manifest-path: Movistar
+
+  deploy:
+    name: Deploy to K3S
+    needs: validate
+    runs-on: self-hosted
+    env:
+      KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+      PUBLIC_HOST: ${{ inputs.public-host }}
+      IMAGE_TAG: ${{ inputs.image-tag }}
+      KUBECONFIG: /tmp/reto-movistar-kubeconfig-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v6
+        with:
+          repository: gabrielwyp/K3S_Infra
+          ref: main
+
+      - name: Validate deployment inputs
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "${KUBE_NAMESPACE}" = "reto-movistar" || {
+            echo "::error::kube-namespace must be reto-movistar"
+            exit 1
+          }
+          test "${PUBLIC_HOST}" = "reto-movistar.ikigais.app" || {
+            echo "::error::public-host must be reto-movistar.ikigais.app"
+            exit 1
+          }
+          [[ "${IMAGE_TAG}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] || {
+            echo "::error::Invalid OCI image tag"
+            exit 1
+          }
+          for name in KUBECONFIG_B64 GHCR_PULL_TOKEN; do
+            test -n "${!name:-}" || {
+              echo "::error::Missing required secret: ${name}"
+              exit 1
+            }
+          done
+
+      - name: Configure K3S access
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "${KUBECONFIG_B64}" | base64 --decode > "${KUBECONFIG}"
+          kubectl cluster-info
+          kubectl create namespace "${KUBE_NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Reconcile GHCR pull secret
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_USER: gabrielwyp
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          trap 'rm -rf "${secret_dir}"' EXIT
+          chmod 700 "${secret_dir}"
+
+          export GHCR_AUTH
+          GHCR_AUTH="$(printf '%s:%s' "${GHCR_USER}" "${GHCR_PULL_TOKEN}" | base64 | tr -d '\n')"
+          jq --null-input \
+            '{auths:{"ghcr.io":{username:env.GHCR_USER,password:env.GHCR_PULL_TOKEN,auth:env.GHCR_AUTH}}}' \
+            > "${secret_dir}/.dockerconfigjson"
+          kubectl create secret generic ghcr-pull-secret \
+            --type=kubernetes.io/dockerconfigjson \
+            --from-file=.dockerconfigjson="${secret_dir}/.dockerconfigjson" \
+            --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
+            | kubectl apply -f -
+
+      - name: Apply immutable release
+        run: |
+          set -euo pipefail
+          sed -i "s/newTag: bootstrap/newTag: ${IMAGE_TAG}/g" \
+            Movistar/kustomization.yaml
+          kubectl apply -k Movistar
+
+      - name: Wait for application rollout
+        run: |
+          set -euo pipefail
+          rollback() {
+            kubectl rollout undo deployment/reto-movistar \
+              --namespace "${KUBE_NAMESPACE}" || true
+          }
+          trap rollback ERR
+          kubectl rollout status deployment/reto-movistar \
+            --namespace "${KUBE_NAMESPACE}" --timeout=8m
+          trap - ERR
+
+      - name: Verify internal health
+        run: |
+          set -euo pipefail
+          kubectl run reto-movistar-health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
+            --namespace "${KUBE_NAMESPACE}" --rm --restart=Never \
+            --image=curlimages/curl:8.16.0 --attach --quiet -- \
+            --fail --silent --show-error \
+            http://reto-movistar:8080/health
+
+      - name: Verify public Host routing
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error \
+            --retry 6 --retry-delay 5 --retry-all-errors \
+            "https://${PUBLIC_HOST}/health" > /dev/null
+
+      - name: Deployment diagnostics
+        if: failure()
+        run: |
+          kubectl get deployments,pods,services,ingressroutes \
+            --namespace "${KUBE_NAMESPACE}" -o wide || true
+          kubectl get events --namespace "${KUBE_NAMESPACE}" \
+            --sort-by='.lastTimestamp' | tail -30 || true
+
+      - name: Remove kubeconfig
+        if: always()
+        run: rm -f "${KUBECONFIG}"
