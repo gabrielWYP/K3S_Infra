@@ -78,6 +78,33 @@ jobs:
             }
           done
 
+      - name: Install kubectl
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.34.3"
+          ARCH=$(uname -m)
+          case "${ARCH}" in
+            x86_64)  ARCH_SUFFIX="amd64" ;;
+            aarch64) ARCH_SUFFIX="arm64" ;;
+            *)       echo "Unsupported architecture: ${ARCH}"; exit 1 ;;
+          esac
+
+          INSTALL_DIR="${RUNNER_TEMP}/kubectl-${KUBECTL_VERSION}"
+          mkdir -p "${INSTALL_DIR}"
+          curl --fail --location --silent --show-error \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH_SUFFIX}/kubectl" \
+            --output "${INSTALL_DIR}/kubectl"
+          curl --fail --location --silent --show-error \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH_SUFFIX}/kubectl.sha256" \
+            --output "${INSTALL_DIR}/kubectl.sha256"
+          (
+            cd "${INSTALL_DIR}"
+            echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+          )
+          chmod u+x "${INSTALL_DIR}/kubectl"
+          echo "${INSTALL_DIR}" >> "${GITHUB_PATH}"
+          "${INSTALL_DIR}/kubectl" version --client
+
       - name: Configure K3S access
         env:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
