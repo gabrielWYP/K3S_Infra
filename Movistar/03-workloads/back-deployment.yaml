@@ -1,9 +1,10 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: reto-movistar
+  name: reto-movistar-back
   labels:
     app.kubernetes.io/name: reto-movistar
+    app.kubernetes.io/component: back
 spec:
   replicas: 1
   revisionHistoryLimit: 3
@@ -15,10 +16,12 @@ spec:
   selector:
     matchLabels:
       app.kubernetes.io/name: reto-movistar
+      app.kubernetes.io/component: back
   template:
     metadata:
       labels:
         app.kubernetes.io/name: reto-movistar
+        app.kubernetes.io/component: back
     spec:
       serviceAccountName: reto-movistar
       automountServiceAccountToken: false
@@ -30,11 +33,12 @@ spec:
         runAsUser: 1001
         runAsGroup: 1001
         fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
         seccompProfile:
           type: RuntimeDefault
       containers:
-        - name: app
-          image: ghcr.io/gabrielwyp/reto-movistar:bootstrap
+        - name: back
+          image: ghcr.io/gabrielwyp/reto-movistar-back:bootstrap
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
