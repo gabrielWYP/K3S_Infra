@@ -20,6 +20,7 @@ jobs:
 
       - name: Install kubeconform
         run: |
+          set -euo pipefail
           KUBECONFORM_VERSION="v0.6.7"
           ARCH=$(uname -m)
           case "$ARCH" in
@@ -29,10 +30,16 @@ jobs:
             *)       echo "Unsupported architecture: $ARCH"; exit 1 ;;
           esac
           echo "Detected architecture: $ARCH -> $ARCH_SUFFIX"
-          sudo rm -f /usr/local/bin/kubeconform
-          wget -q "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${ARCH_SUFFIX}.tar.gz" -O - | tar xz -C /tmp
-          sudo mv /tmp/kubeconform /usr/local/bin/
-          kubeconform -v
+          INSTALL_DIR="${RUNNER_TEMP}/kubeconform-${KUBECONFORM_VERSION}"
+          ARCHIVE="${RUNNER_TEMP}/kubeconform-${ARCH_SUFFIX}.tar.gz"
+          mkdir -p "${INSTALL_DIR}"
+          wget -q \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-${ARCH_SUFFIX}.tar.gz" \
+            -O "${ARCHIVE}"
+          tar -xzf "${ARCHIVE}" -C "${INSTALL_DIR}"
+          chmod u+x "${INSTALL_DIR}/kubeconform"
+          echo "${INSTALL_DIR}" >> "${GITHUB_PATH}"
+          "${INSTALL_DIR}/kubeconform" -v
 
       - name: Validate Kubernetes schemas
         run: |
@@ -50,9 +57,11 @@ jobs:
 
       - name: Install yamllint
         run: |
-          if ! command -v yamllint &> /dev/null; then
-            pip install --quiet yamllint
-          fi
+          set -euo pipefail
+          VENV_DIR="${RUNNER_TEMP}/manifest-validation-venv"
+          python3 -m venv "${VENV_DIR}"
+          "${VENV_DIR}/bin/pip" install --quiet yamllint
+          echo "${VENV_DIR}/bin" >> "${GITHUB_PATH}"
 
       - name: Lint YAML
         run: |
