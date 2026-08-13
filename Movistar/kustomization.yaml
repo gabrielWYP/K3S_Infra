@@ -6,11 +6,16 @@ namespace: reto-movistar
 resources:
   - 01-rbac/serviceaccount.yaml
   - 02-config/configmap.yaml
-  - 03-workloads/deployment.yaml
-  - 04-networking/service.yaml
+  - 03-workloads/back-deployment.yaml
+  - 03-workloads/front-deployment.yaml
+  - 04-networking/back-service.yaml
+  - 04-networking/front-service.yaml
   - 04-networking/ingressroute.yaml
 
 images:
-  - name: ghcr.io/gabrielwyp/reto-movistar
-    newName: ghcr.io/gabrielwyp/reto-movistar
+  - name: ghcr.io/gabrielwyp/reto-movistar-back
+    newName: ghcr.io/gabrielwyp/reto-movistar-back
+    newTag: bootstrap
+  - name: ghcr.io/gabrielwyp/reto-movistar-front
+    newName: ghcr.io/gabrielwyp/reto-movistar-front
     newTag: bootstrap

@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       image-tag:
-        description: Immutable application image tag
+        description: Immutable frontend and backend image tag
         required: true
         type: string
       kube-namespace:
@@ -82,11 +82,11 @@ jobs:
         run: |
           set -euo pipefail
           KUBECTL_VERSION="v1.34.3"
-          ARCH=$(uname -m)
+          ARCH="$(uname -m)"
           case "${ARCH}" in
-            x86_64)  ARCH_SUFFIX="amd64" ;;
+            x86_64) ARCH_SUFFIX="amd64" ;;
             aarch64) ARCH_SUFFIX="arm64" ;;
-            *)       echo "Unsupported architecture: ${ARCH}"; exit 1 ;;
+            *) echo "Unsupported architecture: ${ARCH}"; exit 1 ;;
           esac
 
           INSTALL_DIR="${RUNNER_TEMP}/kubectl-${KUBECTL_VERSION}"
@@ -113,8 +113,7 @@ jobs:
           umask 077
           printf '%s' "${KUBECONFIG_B64}" | base64 --decode > "${KUBECONFIG}"
           kubectl cluster-info
-          kubectl create namespace "${KUBE_NAMESPACE}" \
-            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl create namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
       - name: Reconcile GHCR pull secret
         env:
@@ -128,9 +127,7 @@ jobs:
 
           export GHCR_AUTH
           GHCR_AUTH="$(printf '%s:%s' "${GHCR_USER}" "${GHCR_PULL_TOKEN}" | base64 | tr -d '\n')"
-          jq --null-input \
-            '{auths:{"ghcr.io":{username:env.GHCR_USER,password:env.GHCR_PULL_TOKEN,auth:env.GHCR_AUTH}}}' \
-            > "${secret_dir}/.dockerconfigjson"
+          jq --null-input '{auths:{"ghcr.io":{username:env.GHCR_USER,password:env.GHCR_PULL_TOKEN,auth:env.GHCR_AUTH}}}' > "${secret_dir}/.dockerconfigjson"
           kubectl create secret generic ghcr-pull-secret \
             --type=kubernetes.io/dockerconfigjson \
             --from-file=.dockerconfigjson="${secret_dir}/.dockerconfigjson" \
@@ -138,47 +135,77 @@ jobs:
             | kubectl apply -f -
 
       - name: Apply immutable release
+        id: apply
         run: |
           set -euo pipefail
-          sed -i "s/newTag: bootstrap/newTag: ${IMAGE_TAG}/g" \
-            Movistar/kustomization.yaml
+          if kubectl get deployment/reto-movistar --namespace "${KUBE_NAMESPACE}" > /dev/null 2>&1; then
+            echo "LEGACY_DEPLOYMENT_PRESENT=true" >> "${GITHUB_ENV}"
+          else
+            echo "LEGACY_DEPLOYMENT_PRESENT=false" >> "${GITHUB_ENV}"
+          fi
+          sed -i "s/newTag: bootstrap/newTag: ${IMAGE_TAG}/g" Movistar/kustomization.yaml
           kubectl apply -k Movistar
 
-      - name: Wait for application rollout
+      - name: Wait for backend rollout
         run: |
           set -euo pipefail
-          rollback() {
-            kubectl rollout undo deployment/reto-movistar \
-              --namespace "${KUBE_NAMESPACE}" || true
-          }
-          trap rollback ERR
-          kubectl rollout status deployment/reto-movistar \
-            --namespace "${KUBE_NAMESPACE}" --timeout=8m
-          trap - ERR
+          kubectl rollout status deployment/reto-movistar-back --namespace "${KUBE_NAMESPACE}" --timeout=8m
 
-      - name: Verify internal health
+      - name: Wait for frontend rollout
         run: |
           set -euo pipefail
-          kubectl run reto-movistar-health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
+          kubectl rollout status deployment/reto-movistar-front --namespace "${KUBE_NAMESPACE}" --timeout=8m
+
+      - name: Verify internal services
+        run: |
+          set -euo pipefail
+          kubectl run reto-movistar-back-health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
             --namespace "${KUBE_NAMESPACE}" --rm --restart=Never \
             --image=curlimages/curl:8.16.0 --attach --quiet -- \
-            --fail --silent --show-error \
-            http://reto-movistar:8080/health
+            --fail --silent --show-error http://reto-movistar-back:8080/health
+          kubectl run reto-movistar-front-health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
+            --namespace "${KUBE_NAMESPACE}" --rm --restart=Never \
+            --image=curlimages/curl:8.16.0 --attach --quiet -- \
+            --fail --silent --show-error http://reto-movistar-front:8080/health
+          kubectl run reto-movistar-agents-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
+            --namespace "${KUBE_NAMESPACE}" --rm --restart=Never \
+            --image=curlimages/curl:8.16.0 --attach --quiet -- \
+            --fail --silent --show-error http://reto-movistar-front:8080/api/agents
 
       - name: Verify public Host routing
         run: |
           set -euo pipefail
-          curl --fail --silent --show-error \
-            --retry 6 --retry-delay 5 --retry-all-errors \
-            "https://${PUBLIC_HOST}/health" > /dev/null
+          curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${PUBLIC_HOST}/health" > /dev/null
+          agents="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${PUBLIC_HOST}/api/agents")"
+          printf '%s' "${agents}" | jq --exit-status 'map(.agent_id) == ["billing", "collections", "bi"]' > /dev/null
+
+      - name: Remove legacy single-pod workload
+        if: success() && env.LEGACY_DEPLOYMENT_PRESENT == 'true'
+        run: |
+          set +e
+          kubectl delete deployment/reto-movistar service/reto-movistar \
+            --namespace "${KUBE_NAMESPACE}" --ignore-not-found || {
+              echo "::warning::Two-pod release is healthy, but legacy cleanup failed"
+            }
+
+      - name: Roll back failed release
+        if: failure()
+        run: |
+          set +e
+          if [ "${LEGACY_DEPLOYMENT_PRESENT:-false}" = "true" ]; then
+            kubectl patch ingressroute/reto-movistar \
+              --namespace "${KUBE_NAMESPACE}" --type=json \
+              --patch='[{"op":"replace","path":"/spec/routes/0/services/0/name","value":"reto-movistar"}]'
+          else
+            kubectl rollout undo deployment/reto-movistar-back --namespace "${KUBE_NAMESPACE}"
+            kubectl rollout undo deployment/reto-movistar-front --namespace "${KUBE_NAMESPACE}"
+          fi
 
       - name: Deployment diagnostics
         if: failure()
         run: |
-          kubectl get deployments,pods,services,ingressroutes \
-            --namespace "${KUBE_NAMESPACE}" -o wide || true
-          kubectl get events --namespace "${KUBE_NAMESPACE}" \
-            --sort-by='.lastTimestamp' | tail -30 || true
+          kubectl get deployments,pods,services,ingressroutes --namespace "${KUBE_NAMESPACE}" -o wide || true
+          kubectl get events --namespace "${KUBE_NAMESPACE}" --sort-by='.lastTimestamp' | tail -30 || true
 
       - name: Remove kubeconfig
         if: always()

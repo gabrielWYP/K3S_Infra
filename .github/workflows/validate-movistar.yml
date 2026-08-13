@@ -24,7 +24,12 @@ jobs:
         uses: actions/checkout@v6
 
       - name: Render Kustomize manifests
-        run: kubectl kustomize Movistar > "${RUNNER_TEMP}/movistar.yaml"
+        run: |
+          kubectl kustomize Movistar > "${RUNNER_TEMP}/movistar.yaml"
+          test "$(grep --count '^kind: Deployment$' "${RUNNER_TEMP}/movistar.yaml")" = "2"
+          test "$(grep --count '^kind: Service$' "${RUNNER_TEMP}/movistar.yaml")" = "2"
+          grep --fixed-strings --quiet "ghcr.io/gabrielwyp/reto-movistar-front:bootstrap" "${RUNNER_TEMP}/movistar.yaml"
+          grep --fixed-strings --quiet "ghcr.io/gabrielwyp/reto-movistar-back:bootstrap" "${RUNNER_TEMP}/movistar.yaml"
 
       - name: Install kubeconform
         env:

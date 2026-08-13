@@ -12,5 +12,5 @@ spec:
       match: Host(`reto-movistar.ikigais.app`)
       priority: 100
       services:
-        - name: reto-movistar
+        - name: reto-movistar-front
           port: 8080
