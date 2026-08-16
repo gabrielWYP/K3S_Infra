@@ -22,6 +22,8 @@ on:
         required: true
       GHCR_PULL_TOKEN:
         required: true
+      OPENCODE_KEY:
+        required: false
 
 permissions:
   contents: read
@@ -57,6 +59,7 @@ jobs:
         env:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
           GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          OPENCODE_KEY: ${{ secrets.OPENCODE_KEY }}
         run: |
           set -euo pipefail
           test "${KUBE_NAMESPACE}" = "reto-movistar" || {
@@ -77,6 +80,9 @@ jobs:
               exit 1
             }
           done
+          if [ -z "${OPENCODE_KEY:-}" ]; then
+            echo "::warning::OPENCODE_KEY is not configured; BI will use deterministic fallback"
+          fi
 
       - name: Install kubectl
         run: |
@@ -121,6 +127,10 @@ jobs:
           GHCR_USER: gabrielwyp
         run: |
           set -euo pipefail
+          if [ -z "${OPENCODE_KEY:-}" ]; then
+            echo "OPENCODE_KEY not configured; keeping deterministic fallback"
+            exit 0
+          fi
           secret_dir="$(mktemp -d)"
           trap 'rm -rf "${secret_dir}"' EXIT
           chmod 700 "${secret_dir}"
@@ -131,6 +141,21 @@ jobs:
           kubectl create secret generic ghcr-pull-secret \
             --type=kubernetes.io/dockerconfigjson \
             --from-file=.dockerconfigjson="${secret_dir}/.dockerconfigjson" \
+            --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
+            | kubectl apply -f -
+
+      - name: Reconcile OpenCode Go secret
+        env:
+          OPENCODE_KEY: ${{ secrets.OPENCODE_KEY }}
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          trap 'rm -rf "${secret_dir}"' EXIT
+          chmod 700 "${secret_dir}"
+          umask 077
+          printf '%s' "${OPENCODE_KEY}" > "${secret_dir}/OPENCODE_KEY"
+          kubectl create secret generic reto-movistar-opencode \
+            --from-file=OPENCODE_KEY="${secret_dir}/OPENCODE_KEY" \
             --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
             | kubectl apply -f -
 
@@ -156,6 +181,19 @@ jobs:
           set -euo pipefail
           kubectl rollout status deployment/reto-movistar-front --namespace "${KUBE_NAMESPACE}" --timeout=8m
 
+      - name: Verify OpenCode Go connectivity
+        env:
+          OPENCODE_KEY: ${{ secrets.OPENCODE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${OPENCODE_KEY:-}" ]; then
+            echo "OPENCODE_KEY not configured; skipping provider probe"
+            exit 0
+          fi
+          kubectl exec deployment/reto-movistar-back \
+            --namespace "${KUBE_NAMESPACE}" --container back -- \
+            python -c 'from bi_agent.llm_runtime import OpenCodeRuntime; OpenCodeRuntime().probe()'
+
       - name: Verify internal services
         run: |
           set -euo pipefail
@@ -173,11 +211,19 @@ jobs:
             --fail --silent --show-error http://reto-movistar-front:8080/api/agents
 
       - name: Verify public Host routing
+        env:
+          OPENCODE_KEY: ${{ secrets.OPENCODE_KEY }}
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${PUBLIC_HOST}/health" > /dev/null
           agents="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${PUBLIC_HOST}/api/agents")"
           printf '%s' "${agents}" | jq --exit-status 'map(.agent_id) == ["billing", "collections", "bi"]' > /dev/null
+          if [ -n "${OPENCODE_KEY:-}" ]; then
+            bi_status="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${PUBLIC_HOST}/api/bi/status")"
+            printf '%s' "${bi_status}" | jq --exit-status \
+              '.llm_available == true and .llm.provider == "opencode-go" and .llm.model == "deepseek-v4-flash"' \
+              > /dev/null
+          fi
 
       - name: Remove legacy single-pod workload
         if: success() && env.LEGACY_DEPLOYMENT_PRESENT == 'true'

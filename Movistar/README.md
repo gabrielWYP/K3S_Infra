@@ -12,3 +12,10 @@ Ambas imágenes usan el mismo tag inmutable `main-<sha>`:
 Durante la primera migración, el workflow conserva el Deployment y Service
 legacy hasta completar ambos rollouts y sus smoke tests. Si falla, restaura el
 IngressRoute hacia el servicio anterior.
+
+El agente BI usa OpenCode Go con `deepseek-v4-flash`. El workflow reutilizable
+recibe `OPENCODE_KEY`, lo reconcilia como el Secret `reto-movistar-opencode` y
+lo inyecta exclusivamente al contenedor backend mediante `secretKeyRef`. La
+clave no forma parte de Kustomize, ConfigMap, imágenes ni logs. Durante la
+transición el Secret es opcional: si el caller aún no lo entrega, el rollout
+conserva el fallback determinístico en lugar de bloquear producción.

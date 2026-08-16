@@ -47,6 +47,13 @@ spec:
           envFrom:
             - configMapRef:
                 name: reto-movistar-config
+          env:
+            - name: OPENCODE_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: reto-movistar-opencode
+                  key: OPENCODE_KEY
+                  optional: true
           resources:
             requests:
               cpu: 50m

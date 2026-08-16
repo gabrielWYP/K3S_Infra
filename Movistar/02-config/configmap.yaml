@@ -9,3 +9,4 @@ data:
   SONIA_FRONTEND_DIR: /app/no-frontend
   SONIA_LOG_LEVEL: INFO
   SONIA_PORT: "8080"
+  SONIA_BI_MODEL: deepseek-v4-flash
