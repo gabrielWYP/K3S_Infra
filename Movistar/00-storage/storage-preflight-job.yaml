@@ -1,0 +1,66 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: reto-movistar-storage-preflight
+  namespace: reto-movistar
+  labels:
+    app.kubernetes.io/name: reto-movistar
+    app.kubernetes.io/component: storage-preflight
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: reto-movistar
+        app.kubernetes.io/component: storage-preflight
+    spec:
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: gabo-vm-arm
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: prepare
+          image: busybox:1.37.0
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              mkdir -p /host/movistar /host/movistar-backups
+              chmod 0770 /host/movistar /host/movistar-backups
+              chown 1001:1001 /host/movistar /host/movistar-backups
+              test "$(stat -c '%u:%g:%a' /host/movistar)" = "1001:1001:770"
+              test "$(stat -c '%u:%g:%a' /host/movistar-backups)" = \
+                "1001:1001:770"
+          resources:
+            requests:
+              cpu: 5m
+              memory: 8Mi
+            limits:
+              cpu: 50m
+              memory: 32Mi
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+              add:
+                - CHOWN
+                - DAC_OVERRIDE
+                - FOWNER
+          volumeMounts:
+            - name: storage-root
+              mountPath: /host
+      volumes:
+        - name: storage-root
+          hostPath:
+            path: /mnt/tesis_data
+            type: DirectoryOrCreate

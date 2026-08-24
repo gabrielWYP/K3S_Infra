@@ -124,6 +124,22 @@ jobs:
           kubectl cluster-info
           kubectl create namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
 
+      - name: Prepare local storage paths
+        run: |
+          set -euo pipefail
+          job="reto-movistar-storage-preflight"
+          kubectl delete "job/${job}" --namespace "${KUBE_NAMESPACE}" \
+            --ignore-not-found --wait=true --timeout=1m
+          kubectl apply -f Movistar/00-storage/storage-preflight-job.yaml
+          if ! kubectl wait --for=condition=complete "job/${job}" \
+            --namespace "${KUBE_NAMESPACE}" --timeout=2m; then
+            kubectl logs "job/${job}" --namespace "${KUBE_NAMESPACE}" || true
+            kubectl describe "job/${job}" \
+              --namespace "${KUBE_NAMESPACE}" || true
+            exit 1
+          fi
+          kubectl logs "job/${job}" --namespace "${KUBE_NAMESPACE}"
+
       - name: Reconcile GHCR pull secret
         env:
           GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
