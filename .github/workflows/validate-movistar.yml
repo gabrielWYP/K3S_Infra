@@ -31,6 +31,7 @@ jobs:
           grep --fixed-strings --quiet "ghcr.io/gabrielwyp/reto-movistar-front:bootstrap" "${RUNNER_TEMP}/movistar.yaml"
           grep --fixed-strings --quiet "ghcr.io/gabrielwyp/reto-movistar-back:bootstrap" "${RUNNER_TEMP}/movistar.yaml"
           bash Movistar/tests/validate-autonomous-storage.sh
+          bash Movistar/tests/validate-deploy-secrets.sh
 
       - name: Install kubeconform
         env:

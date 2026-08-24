@@ -127,10 +127,6 @@ jobs:
           GHCR_USER: gabrielwyp
         run: |
           set -euo pipefail
-          if [ -z "${OPENCODE_KEY:-}" ]; then
-            echo "OPENCODE_KEY not configured; keeping deterministic fallback"
-            exit 0
-          fi
           secret_dir="$(mktemp -d)"
           trap 'rm -rf "${secret_dir}"' EXIT
           chmod 700 "${secret_dir}"
@@ -149,6 +145,12 @@ jobs:
           OPENCODE_KEY: ${{ secrets.OPENCODE_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${OPENCODE_KEY:-}" ]; then
+            kubectl delete secret reto-movistar-opencode \
+              --namespace "${KUBE_NAMESPACE}" --ignore-not-found
+            echo "OPENCODE_KEY not configured; stale runtime secret removed"
+            exit 0
+          fi
           secret_dir="$(mktemp -d)"
           trap 'rm -rf "${secret_dir}"' EXIT
           chmod 700 "${secret_dir}"
