@@ -22,6 +22,8 @@ on:
         required: true
       GHCR_PULL_TOKEN:
         required: true
+      ANALYST_HTPASSWD:
+        required: true
       OPENCODE_KEY:
         required: false
 
@@ -59,6 +61,7 @@ jobs:
         env:
           KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
           GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          ANALYST_HTPASSWD: ${{ secrets.ANALYST_HTPASSWD }}
           OPENCODE_KEY: ${{ secrets.OPENCODE_KEY }}
         run: |
           set -euo pipefail
@@ -74,7 +77,7 @@ jobs:
             echo "::error::Invalid OCI image tag"
             exit 1
           }
-          for name in KUBECONFIG_B64 GHCR_PULL_TOKEN; do
+          for name in KUBECONFIG_B64 GHCR_PULL_TOKEN ANALYST_HTPASSWD; do
             test -n "${!name:-}" || {
               echo "::error::Missing required secret: ${name}"
               exit 1
@@ -161,6 +164,30 @@ jobs:
             --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
             | kubectl apply -f -
 
+      - name: Reconcile analyst BasicAuth roster
+        env:
+          ANALYST_HTPASSWD: ${{ secrets.ANALYST_HTPASSWD }}
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          trap 'rm -rf "${secret_dir}"' EXIT
+          chmod 700 "${secret_dir}"
+          umask 077
+          printf '%s\n' "${ANALYST_HTPASSWD}" > "${secret_dir}/users"
+          roster_count="$(grep --count --invert-match '^$' "${secret_dir}/users")"
+          bcrypt_count="$(grep --extended-regexp --count \
+            '^[A-Za-z0-9._@+-]+:\$2[aby]\$[0-9]{2}\$[./A-Za-z0-9]{53}$' \
+            "${secret_dir}/users")"
+          test "${roster_count}" -gt 0
+          test "${bcrypt_count}" = "${roster_count}" || {
+            echo "::error::ANALYST_HTPASSWD must contain only username:bcrypt entries"
+            exit 1
+          }
+          kubectl create secret generic reto-movistar-analyst-auth \
+            --from-file=users="${secret_dir}/users" \
+            --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
+            | kubectl apply -f -
+
       - name: Apply immutable release
         id: apply
         run: |
@@ -213,19 +240,12 @@ jobs:
             --fail --silent --show-error http://reto-movistar-front:8080/api/agents
 
       - name: Verify public Host routing
-        env:
-          OPENCODE_KEY: ${{ secrets.OPENCODE_KEY }}
         run: |
           set -euo pipefail
           curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${PUBLIC_HOST}/health" > /dev/null
-          agents="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${PUBLIC_HOST}/api/agents")"
-          printf '%s' "${agents}" | jq --exit-status 'map(.agent_id) == ["billing", "collections", "bi"]' > /dev/null
-          if [ -n "${OPENCODE_KEY:-}" ]; then
-            bi_status="$(curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${PUBLIC_HOST}/api/bi/status")"
-            printf '%s' "${bi_status}" | jq --exit-status \
-              '.llm_available == true and .llm.provider == "opencode-go" and .llm.model == "deepseek-v4-flash"' \
-              > /dev/null
-          fi
+          public_status="$(curl --silent --show-error --output /dev/null \
+            --write-out '%{http_code}' "https://${PUBLIC_HOST}/api/agents")"
+          test "${public_status}" = "401"
 
       - name: Remove legacy single-pod workload
         if: success() && env.LEGACY_DEPLOYMENT_PRESENT == 'true'
@@ -243,7 +263,7 @@ jobs:
           if [ "${LEGACY_DEPLOYMENT_PRESENT:-false}" = "true" ]; then
             kubectl patch ingressroute/reto-movistar \
               --namespace "${KUBE_NAMESPACE}" --type=json \
-              --patch='[{"op":"replace","path":"/spec/routes/0/services/0/name","value":"reto-movistar"}]'
+              --patch='[{"op":"replace","path":"/spec/routes/0/services/0/name","value":"reto-movistar"},{"op":"replace","path":"/spec/routes/1/services/0/name","value":"reto-movistar"}]'
           else
             kubectl rollout undo deployment/reto-movistar-back --namespace "${KUBE_NAMESPACE}"
             kubectl rollout undo deployment/reto-movistar-front --namespace "${KUBE_NAMESPACE}"
@@ -252,7 +272,7 @@ jobs:
       - name: Deployment diagnostics
         if: failure()
         run: |
-          kubectl get deployments,pods,services,ingressroutes --namespace "${KUBE_NAMESPACE}" -o wide || true
+          kubectl get deployments,pods,services,ingressroutes,middlewares --namespace "${KUBE_NAMESPACE}" -o wide || true
           kubectl get events --namespace "${KUBE_NAMESPACE}" --sort-by='.lastTimestamp' | tail -30 || true
 
       - name: Remove kubeconfig

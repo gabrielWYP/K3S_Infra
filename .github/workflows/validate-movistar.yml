@@ -32,6 +32,7 @@ jobs:
           grep --fixed-strings --quiet "ghcr.io/gabrielwyp/reto-movistar-back:bootstrap" "${RUNNER_TEMP}/movistar.yaml"
           bash Movistar/tests/validate-autonomous-storage.sh
           bash Movistar/tests/validate-deploy-secrets.sh
+          bash Movistar/tests/validate-auth-restore.sh
 
       - name: Install kubeconform
         env:
@@ -52,6 +53,7 @@ jobs:
             -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
             -summary \
             "${RUNNER_TEMP}/movistar.yaml" \
+            Movistar/05-operations/restore-storage.template.yaml \
             Movistar/05-operations/restore-job.template.yaml
 
       - name: Lint YAML

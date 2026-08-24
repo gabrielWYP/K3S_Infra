@@ -1,6 +1,6 @@
 apiVersion: batch/v1
 kind: Job
-metadata: {name: reto-movistar-restore, namespace: reto-movistar}
+metadata: {name: reto-movistar-restore-REPLACE_RESTORE_ID, namespace: reto-movistar}
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 1800
@@ -17,7 +17,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: restore
-          image: ghcr.io/gabrielwyp/reto-movistar-back:bootstrap
+          image: REPLACE_BACKEND_IMAGE
           env:
             - {name: BACKUP_NAME, value: REPLACE_BACKUP_NAME}
           command: [/bin/sh, -ec]
@@ -41,4 +41,4 @@ spec:
         - name: backups
           persistentVolumeClaim: {claimName: sonia-backups}
         - name: restore
-          persistentVolumeClaim: {claimName: sonia-restore-target}
+          persistentVolumeClaim: {claimName: sonia-restore-target-REPLACE_RESTORE_ID}

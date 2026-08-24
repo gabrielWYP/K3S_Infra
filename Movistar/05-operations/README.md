@@ -6,16 +6,22 @@ This meets RPO 24h/RTO 4h only while the node and disk survive; off-node replica
 production follow-up.
 
 Before rollout, create both host directories, assign UID/GID 1001, and verify the node label.
-Apply the overlay, then confirm both PVCs are Bound and `/ready` is 200. Backend uses one
-replica and `Recreate`, so expect brief rollout downtime; front topology is unchanged.
+Configure `ANALYST_HTPASSWD` with one bcrypt htpasswd line per authorized analyst. Traefik
+keeps `/health` public, protects every other public route, strips client identity, and writes
+the authenticated username to `X-Forwarded-User`. Apply the overlay, then confirm both PVCs
+are Bound and `/ready` is 200. Backend uses one replica and `Recreate`, so expect brief
+rollout downtime; front topology is unchanged.
 
 ## Restore drill (manual and non-destructive)
 
 1. Choose a checksummed `backup-*` directory and stop run creation.
-2. Provision a new retained local PV/PVC named `sonia-restore-target` on a fresh host path;
-   never bind it to `/mnt/tesis_data/movistar`.
-3. Copy `restore-job.template.yaml`, replace only `REPLACE_BACKUP_NAME`, apply it, and wait
-   for success. The job refuses a reused destination and never mounts the live PVC.
+2. Select a unique restore ID and a fresh path under `/mnt/tesis_data/movistar-restores/`.
+   Create the directory on `gabo-vm-arm` with UID/GID 1001. Replace both placeholders in
+   `restore-storage.template.yaml`, confirm the path is empty, then apply the retained PV/PVC.
+3. Copy `restore-job.template.yaml`; replace `REPLACE_RESTORE_ID`, `REPLACE_BACKUP_NAME`,
+   and `REPLACE_BACKEND_IMAGE`. The image must be the exact immutable backend reference
+   deployed for the drill, never `:bootstrap`. Apply it and wait for success. The job refuses
+   a reused destination and never mounts the live PVC.
 4. Start a temporary backend against the restored subdirectory and require `/ready` plus
    dataset, package, history, and review reads to match the source manifest.
 5. Promotion is explicit: scale backend to zero, retain/export the old PVC, update the live
