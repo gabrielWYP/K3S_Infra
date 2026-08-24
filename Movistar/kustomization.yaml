@@ -11,6 +11,7 @@ resources:
   - 03-workloads/front-deployment.yaml
   - 04-networking/back-service.yaml
   - 04-networking/front-service.yaml
+  - 04-networking/analyst-auth-middleware.yaml
   - 04-networking/ingressroute.yaml
   - 05-operations/backup-cronjob.yaml
 

@@ -9,8 +9,16 @@ spec:
     - web
   routes:
     - kind: Rule
+      match: Host(`reto-movistar.ikigais.app`) && Path(`/health`)
+      priority: 200
+      services:
+        - name: reto-movistar-front
+          port: 8080
+    - kind: Rule
       match: Host(`reto-movistar.ikigais.app`)
       priority: 100
+      middlewares:
+        - name: reto-movistar-analyst-auth
       services:
         - name: reto-movistar-front
           port: 8080

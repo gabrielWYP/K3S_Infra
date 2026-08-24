@@ -1,0 +1,11 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: reto-movistar-analyst-auth
+  labels:
+    app.kubernetes.io/name: reto-movistar
+spec:
+  basicAuth:
+    secret: reto-movistar-analyst-auth
+    removeHeader: true
+    headerField: X-Forwarded-User

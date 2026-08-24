@@ -1,0 +1,26 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: reto-movistar-sonia-restore-REPLACE_RESTORE_ID
+spec:
+  capacity: {storage: 5Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  local: {path: REPLACE_RESTORE_HOST_PATH}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [gabo-vm-arm]}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: sonia-restore-target-REPLACE_RESTORE_ID
+  namespace: reto-movistar
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-storage
+  volumeName: reto-movistar-sonia-restore-REPLACE_RESTORE_ID
+  resources: {requests: {storage: 5Gi}}
