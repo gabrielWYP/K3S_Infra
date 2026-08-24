@@ -4,6 +4,7 @@ kind: Kustomization
 namespace: reto-movistar
 
 resources:
+  - 00-storage/storage.yaml
   - 01-rbac/serviceaccount.yaml
   - 02-config/configmap.yaml
   - 03-workloads/back-deployment.yaml
@@ -11,6 +12,7 @@ resources:
   - 04-networking/back-service.yaml
   - 04-networking/front-service.yaml
   - 04-networking/ingressroute.yaml
+  - 05-operations/backup-cronjob.yaml
 
 images:
   - name: ghcr.io/gabrielwyp/reto-movistar-back

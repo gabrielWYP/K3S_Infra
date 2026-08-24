@@ -1,0 +1,51 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: reto-movistar-backup}
+spec:
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          nodeSelector: {kubernetes.io/hostname: gabo-vm-arm}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            fsGroup: 1001
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: backup
+              image: ghcr.io/gabrielwyp/reto-movistar-back:bootstrap
+              command: [/bin/sh, -ec]
+              args:
+                - |
+                  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+                  python -c 'import sys; from pathlib import Path; from sonia.persistence.backup import StorageHardener; StorageHardener(Path(sys.argv[1])).backup(Path(sys.argv[2]))' /var/lib/sonia "/var/backups/sonia/backup-${stamp}"
+                  test "$(realpath /var/backups/sonia)" = /var/backups/sonia
+                  find /var/backups/sonia -mindepth 1 -maxdepth 1 -type d -name 'backup-*' -mtime +13 -exec rm -rf -- {} +
+              resources:
+                requests: {cpu: 50m, memory: 128Mi}
+                limits: {cpu: 500m, memory: 512Mi}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              volumeMounts:
+                - {name: live, mountPath: /var/lib/sonia}
+                - {name: backups, mountPath: /var/backups/sonia}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: live
+              persistentVolumeClaim: {claimName: sonia-live}
+            - name: backups
+              persistentVolumeClaim: {claimName: sonia-backups}
+            - name: tmp
+              emptyDir: {sizeLimit: 64Mi}

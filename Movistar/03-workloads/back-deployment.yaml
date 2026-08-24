@@ -9,10 +9,7 @@ spec:
   replicas: 1
   revisionHistoryLimit: 3
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxSurge: 1
-      maxUnavailable: 0
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: reto-movistar
@@ -48,6 +45,8 @@ spec:
             - configMapRef:
                 name: reto-movistar-config
           env:
+            - name: SONIA_STORAGE_ROOT
+              value: /var/lib/sonia
             - name: OPENCODE_KEY
               valueFrom:
                 secretKeyRef:
@@ -70,7 +69,7 @@ spec:
             timeoutSeconds: 3
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: http
             periodSeconds: 10
             timeoutSeconds: 5
@@ -89,9 +88,14 @@ spec:
               drop:
                 - ALL
           volumeMounts:
+            - name: sonia-live
+              mountPath: /var/lib/sonia
             - name: tmp
               mountPath: /tmp
       volumes:
+        - name: sonia-live
+          persistentVolumeClaim:
+            claimName: sonia-live
         - name: tmp
           emptyDir:
             sizeLimit: 64Mi
