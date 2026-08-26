@@ -17,6 +17,21 @@ on:
         required: false
         default: reto-movistar.ikigais.app
         type: string
+      oci-namespace:
+        description: OCI Object Storage namespace for the run audit trail
+        required: false
+        default: ""
+        type: string
+      oci-bucket:
+        description: OCI bucket receiving the run audit objects
+        required: false
+        default: ""
+        type: string
+      oci-region:
+        description: OCI region of that bucket
+        required: false
+        default: ""
+        type: string
     secrets:
       KUBECONFIG_B64:
         required: true
@@ -25,6 +40,10 @@ on:
       ANALYST_HTPASSWD:
         required: true
       OPENCODE_KEY:
+        required: false
+      SONIA_OCI_ACCESS_KEY_ID:
+        required: false
+      SONIA_OCI_SECRET_ACCESS_KEY:
         required: false
 
 permissions:
@@ -179,6 +198,33 @@ jobs:
             --from-file=OPENCODE_KEY="${secret_dir}/OPENCODE_KEY" \
             --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
             | kubectl apply -f -
+
+      - name: Reconcile OCI object storage secret
+        env:
+          OCI_NAMESPACE: ${{ inputs.oci-namespace }}
+          OCI_BUCKET: ${{ inputs.oci-bucket }}
+          OCI_REGION: ${{ inputs.oci-region }}
+          OCI_ACCESS_KEY_ID: ${{ secrets.SONIA_OCI_ACCESS_KEY_ID }}
+          OCI_SECRET_ACCESS_KEY: ${{ secrets.SONIA_OCI_SECRET_ACCESS_KEY }}
+        run: |
+          set -euo pipefail
+          for name in OCI_NAMESPACE OCI_BUCKET OCI_REGION OCI_ACCESS_KEY_ID             OCI_SECRET_ACCESS_KEY; do
+            if [ -z "${!name:-}" ]; then
+              kubectl delete secret reto-movistar-oci                 --namespace "${KUBE_NAMESPACE}" --ignore-not-found
+              echo "::warning::Object storage is not fully configured (${name} is empty);"                " the run audit trail is disabled"
+              exit 0
+            fi
+          done
+          secret_dir="$(mktemp -d)"
+          trap 'rm -rf "${secret_dir}"' EXIT
+          chmod 700 "${secret_dir}"
+          umask 077
+          printf '%s' "${OCI_NAMESPACE}" > "${secret_dir}/SONIA_OCI_NAMESPACE"
+          printf '%s' "${OCI_BUCKET}" > "${secret_dir}/SONIA_OCI_BUCKET"
+          printf '%s' "${OCI_REGION}" > "${secret_dir}/SONIA_OCI_REGION"
+          printf '%s' "${OCI_ACCESS_KEY_ID}" > "${secret_dir}/SONIA_OCI_ACCESS_KEY_ID"
+          printf '%s' "${OCI_SECRET_ACCESS_KEY}" > "${secret_dir}/SONIA_OCI_SECRET_ACCESS_KEY"
+          kubectl create secret generic reto-movistar-oci             --from-file=SONIA_OCI_NAMESPACE="${secret_dir}/SONIA_OCI_NAMESPACE"             --from-file=SONIA_OCI_BUCKET="${secret_dir}/SONIA_OCI_BUCKET"             --from-file=SONIA_OCI_REGION="${secret_dir}/SONIA_OCI_REGION"             --from-file=SONIA_OCI_ACCESS_KEY_ID="${secret_dir}/SONIA_OCI_ACCESS_KEY_ID"             --from-file=SONIA_OCI_SECRET_ACCESS_KEY="${secret_dir}/SONIA_OCI_SECRET_ACCESS_KEY"             --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml             | kubectl apply -f -
 
       - name: Reconcile analyst BasicAuth roster
         env:
