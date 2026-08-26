@@ -44,6 +44,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: reto-movistar-config
+            # Absent until object storage is configured; the run audit is then disabled.
+            - secretRef:
+                name: reto-movistar-oci
+                optional: true
           env:
             - name: SONIA_STORAGE_ROOT
               value: /var/lib/sonia
