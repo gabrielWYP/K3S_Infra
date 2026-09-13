@@ -1,0 +1,216 @@
+name: Deploy Bot Trading
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: Immutable monitor image tag
+        required: true
+        type: string
+      kube-namespace:
+        description: Kubernetes namespace
+        required: false
+        default: bot-trading
+        type: string
+      public-host:
+        description: Public Traefik host
+        required: false
+        default: bot-trading.ikigais.app
+        type: string
+    secrets:
+      KUBECONFIG_B64:
+        required: true
+      GHCR_PULL_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      image-tag:
+        description: Immutable monitor image tag
+        required: true
+        type: string
+      kube-namespace:
+        description: Kubernetes namespace
+        required: false
+        default: bot-trading
+        type: string
+      public-host:
+        description: Public Traefik host
+        required: false
+        default: bot-trading.ikigais.app
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-bot-trading-${{ inputs.kube-namespace }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate manifests
+    uses: gabrielwyp/K3S_Infra/.github/workflows/validate-manifests.yml@main
+    with:
+      manifest-path: Bot_Trading
+
+  deploy:
+    name: Deploy to K3S
+    needs: validate
+    runs-on: self-hosted
+    env:
+      KUBE_NAMESPACE: ${{ inputs.kube-namespace }}
+      PUBLIC_HOST: ${{ inputs.public-host }}
+      IMAGE_TAG: ${{ inputs.image-tag }}
+      KUBECONFIG: /tmp/bot-trading-kubeconfig-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v6
+        with:
+          repository: gabrielwyp/K3S_Infra
+          ref: main
+
+      - name: Validate deployment inputs
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "${KUBE_NAMESPACE}" = "bot-trading" || {
+            echo "::error::kube-namespace must be bot-trading"
+            exit 1
+          }
+          test "${PUBLIC_HOST}" = "bot-trading.ikigais.app" || {
+            echo "::error::public-host must be bot-trading.ikigais.app"
+            exit 1
+          }
+          [[ "${IMAGE_TAG}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] || {
+            echo "::error::Invalid OCI image tag"
+            exit 1
+          }
+          for name in KUBECONFIG_B64 GHCR_PULL_TOKEN; do
+            test -n "${!name:-}" || {
+              echo "::error::Missing required secret: ${name}"
+              exit 1
+            }
+          done
+
+      - name: Install kubectl
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.34.3"
+          ARCH="$(uname -m)"
+          case "${ARCH}" in
+            x86_64) ARCH_SUFFIX="amd64" ;;
+            aarch64) ARCH_SUFFIX="arm64" ;;
+            *) echo "Unsupported architecture: ${ARCH}"; exit 1 ;;
+          esac
+
+          INSTALL_DIR="${RUNNER_TEMP}/kubectl-${KUBECTL_VERSION}"
+          mkdir -p "${INSTALL_DIR}"
+          curl --fail --location --silent --show-error \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH_SUFFIX}/kubectl" \
+            --output "${INSTALL_DIR}/kubectl"
+          curl --fail --location --silent --show-error \
+            "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH_SUFFIX}/kubectl.sha256" \
+            --output "${INSTALL_DIR}/kubectl.sha256"
+          (
+            cd "${INSTALL_DIR}"
+            echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check
+          )
+          chmod u+x "${INSTALL_DIR}/kubectl"
+          echo "${INSTALL_DIR}" >> "${GITHUB_PATH}"
+          "${INSTALL_DIR}/kubectl" version --client
+
+      - name: Configure K3S access
+        env:
+          KUBECONFIG_B64: ${{ secrets.KUBECONFIG_B64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s' "${KUBECONFIG_B64}" | base64 --decode > "${KUBECONFIG}"
+          kubectl cluster-info
+          kubectl create namespace "${KUBE_NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Reconcile GHCR pull secret
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          GHCR_USER: gabrielwyp
+        run: |
+          set -euo pipefail
+          secret_dir="$(mktemp -d)"
+          trap 'rm -rf "${secret_dir}"' EXIT
+          chmod 700 "${secret_dir}"
+
+          export GHCR_AUTH
+          GHCR_AUTH="$(printf '%s:%s' "${GHCR_USER}" "${GHCR_PULL_TOKEN}" | base64 | tr -d '\n')"
+          jq --null-input '{auths:{"ghcr.io":{username:env.GHCR_USER,password:env.GHCR_PULL_TOKEN,auth:env.GHCR_AUTH}}}' > "${secret_dir}/.dockerconfigjson"
+          kubectl create secret generic ghcr-pull-secret \
+            --type=kubernetes.io/dockerconfigjson \
+            --from-file=.dockerconfigjson="${secret_dir}/.dockerconfigjson" \
+            --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
+            | kubectl apply -f -
+
+      - name: Apply immutable release
+        run: |
+          set -euo pipefail
+          sed -i "s/newTag: bootstrap/newTag: ${IMAGE_TAG}/g" Bot_Trading/kustomization.yaml
+          kubectl apply -k Bot_Trading
+
+      - name: Wait for monitor rollout
+        run: |
+          set -euo pipefail
+          kubectl rollout status deployment/bot-trading \
+            --namespace "${KUBE_NAMESPACE}" --timeout=8m
+
+      - name: Verify internal service
+        run: |
+          set -euo pipefail
+          service_dns="bot-trading.${KUBE_NAMESPACE}.svc.cluster.local:8080"
+          kubectl run bot-trading-health-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
+            --namespace "${KUBE_NAMESPACE}" --rm --restart=Never \
+            --image=curlimages/curl:8.16.0 --attach --quiet -- \
+            --fail --silent --show-error "http://${service_dns}/health"
+          kubectl run bot-trading-ready-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} \
+            --namespace "${KUBE_NAMESPACE}" --rm --restart=Never \
+            --image=curlimages/curl:8.16.0 --attach --quiet -- \
+            --fail --silent --show-error "http://${service_dns}/ready"
+
+      - name: Verify operational endpoints are not public
+        run: |
+          set -euo pipefail
+          # Traefik answers a denied request with 403. curl does not treat that
+          # as an error, so --retry never fires: poll until the IngressRoute is
+          # reconciled instead.
+          for path in /metrics /ready; do
+            status=""
+            for attempt in 1 2 3 4 5 6; do
+              status="$(curl --silent --output /dev/null \
+                --write-out '%{http_code}' "https://${PUBLIC_HOST}${path}" || echo 000)"
+              test "${status}" = "403" && break
+              echo "Attempt ${attempt}: ${path} returned ${status}; retrying"
+              sleep 5
+            done
+            test "${status}" = "403" || {
+              echo "::error::${path} must not be publicly reachable (got ${status})"
+              exit 1
+            }
+          done
+
+      - name: Roll back failed release
+        if: failure()
+        run: |
+          set +e
+          kubectl rollout undo deployment/bot-trading --namespace "${KUBE_NAMESPACE}"
+
+      - name: Deployment diagnostics
+        if: failure()
+        run: |
+          kubectl get deployments,pods,services,ingressroutes,middlewares \
+            --namespace "${KUBE_NAMESPACE}" -o wide || true
+          kubectl get events --namespace "${KUBE_NAMESPACE}" \
+            --sort-by='.lastTimestamp' | tail -30 || true
+
+      - name: Remove kubeconfig
+        if: always()
+        run: rm -f "${KUBECONFIG}"

@@ -1,0 +1,73 @@
+name: Validate Bot Trading
+
+on:
+  pull_request:
+    paths:
+      - "Bot_Trading/**"
+      - ".github/workflows/deploy-bot-trading.yml"
+      - ".github/workflows/validate-bot-trading.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-bot-trading-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  manifests:
+    name: Render and validate manifests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v6
+
+      - name: Render Kustomize manifests
+        run: |
+          set -euo pipefail
+          rendered="${RUNNER_TEMP}/bot-trading.yaml"
+          kubectl kustomize Bot_Trading > "${rendered}"
+          test "$(grep --count '^kind: Deployment$' "${rendered}")" = "1"
+          test "$(grep --count '^kind: Service$' "${rendered}")" = "1"
+          test "$(grep --count '^kind: IngressRoute$' "${rendered}")" = "1"
+          grep --fixed-strings --quiet "ghcr.io/gabrielwyp/bot-trading:bootstrap" "${rendered}"
+          # The monitor reads a public Hyperliquid endpoint: it must never
+          # grow a Secret or a secretRef.
+          test "$(grep --count '^kind: Secret$' "${rendered}" || true)" = "0"
+          test "$(grep --count 'secretRef' "${rendered}" || true)" = "0"
+          # Every resource must inherit the namespace from the kustomization,
+          # so no manifest may hardcode it in its own metadata.
+          resources="$(grep --count '^kind: ' "${rendered}")"
+          namespaced="$(grep --count '^  namespace: bot-trading$' "${rendered}")"
+          test "${resources}" = "${namespaced}"
+
+      - name: Install kubeconform
+        env:
+          KUBECONFORM_VERSION: v0.6.7
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz" \
+            | tar --extract --gzip --directory "${RUNNER_TEMP}" kubeconform
+          echo "${RUNNER_TEMP}" >> "${GITHUB_PATH}"
+
+      - name: Validate Kubernetes schemas
+        run: |
+          kubeconform \
+            -strict \
+            -ignore-missing-schemas \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            -summary \
+            "${RUNNER_TEMP}/bot-trading.yaml" \
+            monitoring/03-serviceMonitor/bot-trading-servicemonitor.yaml
+
+      - name: Lint YAML
+        run: |
+          python -m pip install --disable-pip-version-check --quiet yamllint==1.37.1
+          yamllint -d '{extends: relaxed, rules: {line-length: {max: 160}}}' \
+            Bot_Trading \
+            monitoring/03-serviceMonitor/bot-trading-servicemonitor.yaml \
+            .github/workflows/deploy-bot-trading.yml \
+            .github/workflows/validate-bot-trading.yml
