@@ -12,30 +12,93 @@
 # `persistentVolumeReclaimPolicy: Retain` keeps the data on disk even if the
 # claim is deleted by accident.
 #
+# ===========================================================================
+# Capacity: 8Gi. Arithmetic, from measured rows rather than a guess.
+# ===========================================================================
+#
+# What changed from the previous 2Gi: the collector no longer pulls a
+# 13-symbol basket at two timeframes. It pulls the FULL universe -- 234 assets
+# on the main dex plus 120 on the `xyz` HIP-3 dex, 354 today and discovered at
+# runtime -- at four intervals plus hourly funding. That is ~27x the units, and
+# the per-unit series are deeper. Against that, every file large enough to
+# matter is now gzipped, which measured 4.0x across the whole cache and 4.6x
+# over three real files (3.50x on 1h candles, 3.40x on 1d, 5.04x on funding).
+#
 # ---------------------------------------------------------------------------
-# Capacity: 2Gi. Arithmetic, from measured rows rather than a guess.
+# Row size: 70 B/row.
 # ---------------------------------------------------------------------------
-# Row size, measured on real cached files (data/cache):
+# Measured on real cached files:
 #   1h candles      66,349 bytes / 1,051 rows = 63 B/row
 #   hourly funding  64,981 bytes / 1,052 rows = 62 B/row
 #   -> round up to 70 B/row to cover longer prices and HIP-3 tickers.
+# This is the *uncompressed* row; the 4x below is applied after.
 #
-# Rows per symbol per year:
-#   1h candles   24 * 365 = 8,760
-#   4h candles    6 * 365 = 2,190
-#   hourly funding         = 8,760
-#                          ---------
-#                            19,710 rows = ~1.38 MB/symbol/year
+# ---------------------------------------------------------------------------
+# Rows per asset per YEAR of accumulation, at the four collected intervals:
+# ---------------------------------------------------------------------------
+#        1d       1 * 365 =    365
+#        4h       6 * 365 =  2,190
+#        1h      24 * 365 =  8,760
+#       15m      96 * 365 = 35,040   <- 15m alone is 64% of every byte
+#   funding      24 * 365 =  8,760
+#                          --------
+#                            55,115 rows/asset/year
+#   55,115 * 70 B          =   3.68 MB/asset/year raw
+#   / 4 (measured gzip)    =   0.92 MB/asset/year stored
 #
-# Basket of 13 symbols  ->  ~18 MB/year.
-#   10 years of accumulation        ~180 MB
-#   x4 headroom for a larger basket ~720 MB  (52 symbols, or more timeframes)
-#   + atomic rewrite scratch: the CSV cache writes a full temp copy beside the
-#     target before renaming, so peak usage is ~2x the largest single file
-#     (a few MB) -- negligible against the total.
+# ---------------------------------------------------------------------------
+# Seed: what the first deep pull captures, i.e. everything still retained.
+# ---------------------------------------------------------------------------
+# Measured against the live API, asking three years back:
+#        1d   2,216 candles (reaches 2020-08-19, six years)
+#        4h   5,000        (833 days)
+#        1h   5,000        (208 days)
+#       15m   5,000        (52 days)
+#   funding  30,000        (hourly; 28,730 measured on ATOM, ~3.3 years)
+#                        --------
+#                          47,216 rows/asset
+#   47,216 * 70 B        =   3.15 MB/asset raw
+#   / 4                  =   0.79 MB/asset stored
 #
-# 2Gi therefore covers roughly a decade of a basket four times this size, and
-# is small enough to stay honest about what the node actually has.
+# ---------------------------------------------------------------------------
+# Totals: seed + N years, at today's 354 assets and at a grown 500.
+# ---------------------------------------------------------------------------
+#   assets  years   stored
+#      354      3   1.23 GB
+#      354      5   1.86 GB
+#      354      8   2.82 GB
+#      500      3   1.73 GB
+#      500      5   2.63 GB
+#      500      8   3.98 GB   <- the worst case this volume is sized for
+#
+#   + atomic rewrite scratch: a save writes a full temporary copy beside the
+#     target before renaming, so peak usage is ~2x the largest single file. The
+#     largest after eight years is a 15m series, ~19.6 MB raw and ~5 MB stored,
+#     so ~5 MB of transient extra. Negligible.
+#   + collector state file: ~1,800 entries, ~110 KB. Negligible.
+#
+# 8Gi is a little over 2x the eight-year, 500-asset figure. The headroom is
+# there because the inputs that could move are all in the same direction: the
+# venue could list faster than 500, add an interval worth collecting, or extend
+# retention, and the archive is the one thing here that cannot be rebuilt by
+# re-running anything.
+#
+# ---------------------------------------------------------------------------
+# Is 8Gi a fair share of this disk?
+# ---------------------------------------------------------------------------
+# /mnt/tesis_data is 104 GB with ~62 GB free, shared with Prometheus, Loki,
+# Movistar and five Actions runners. 8Gi is ~14% of what is free, for the only
+# workload on it whose data cannot be regenerated -- Prometheus and Loki both
+# expire theirs by retention policy, and a runner's workspace is scratch.
+#
+# Note what this number is and is not: a `local-storage` PV reserves nothing.
+# `capacity` is metadata the scheduler matches claims against; the kubelet does
+# not enforce it and the directory can grow past it until the disk itself is
+# full. So 8Gi is a declared budget to alert on, not a fence. The archive grows
+# ~0.9 GB/year at today's universe, which is slow enough that the node's own
+# disk-usage alerting is the right place to catch it, and the fix when it is
+# approached is to grow the disk or drop the 15m interval (64% of the bytes),
+# not to let the volume silently fill.
 #
 # ---------------------------------------------------------------------------
 # Operator prerequisite, once per node, before the first apply:
@@ -48,6 +111,11 @@
 # directory is absent. Movistar covers the same prerequisite with a one-off
 # preflight Job that is deliberately kept out of its kustomization; this app
 # has a single directory and no reason to ship a privileged Job for it.
+#
+# Resizing note: a bound PV/PVC pair on `no-provisioner` storage cannot be
+# expanded in place. Growing this later means deleting the PVC and PV objects
+# (Retain keeps the directory and its contents on the node untouched) and
+# re-applying both with the new capacity.
 apiVersion: v1
 kind: PersistentVolume
 metadata:
@@ -56,7 +124,7 @@ metadata:
     app.kubernetes.io/name: bot-trading
     app.kubernetes.io/component: collector
 spec:
-  capacity: {storage: 2Gi}
+  capacity: {storage: 8Gi}
   accessModes: [ReadWriteOnce]
   persistentVolumeReclaimPolicy: Retain
   storageClassName: local-storage
@@ -78,4 +146,4 @@ spec:
   accessModes: [ReadWriteOnce]
   storageClassName: local-storage
   volumeName: bot-trading-market-history
-  resources: {requests: {storage: 2Gi}}
+  resources: {requests: {storage: 8Gi}}

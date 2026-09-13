@@ -47,11 +47,15 @@ jobs:
             grep --after-context=2 'secretRef' "${rendered}" \
               | grep --quiet 'optional: true'
           fi
-          # Every resource must inherit the namespace from the kustomization,
-          # so no manifest may hardcode it in its own metadata.
+          # Every NAMESPACED resource must inherit the namespace from the
+          # kustomization, so no manifest may hardcode it in its own metadata.
+          # A PersistentVolume is cluster-scoped and kustomize correctly leaves
+          # it alone, so it is subtracted from the total rather than the rule
+          # being weakened for everything else.
           resources="$(grep --count '^kind: ' "${rendered}")"
+          cluster_scoped="$(grep --count '^kind: PersistentVolume$' "${rendered}" || true)"
           namespaced="$(grep --count '^  namespace: bot-trading$' "${rendered}")"
-          test "${resources}" = "${namespaced}"
+          test "$((resources - cluster_scoped))" = "${namespaced}"
 
       - name: Install kubeconform
         env:
