@@ -1,0 +1,125 @@
+# Market-history collector.
+#
+# Why this exists: Hyperliquid retains only ~5000 candles per interval, so
+# history that is not captured now is lost permanently. Statistical power is
+# this project's binding constraint -- a recent analysis found ~11 independent
+# observations over 197 days, roughly 30x short of what validating any edge
+# needs. This job is the fix, and it only works by running for months.
+#
+# It reuses the monitor's image and drives the shipped read-only CLI. It holds
+# no credential: the Hyperliquid /info endpoint is public, so there is no
+# Secret here and no imagePullSecret-independent credential of any kind.
+#
+# ---------------------------------------------------------------------------
+# Schedule: every six hours, at minute 17. Why:
+#
+#   * The binding horizon is the 1h series: ~5000 candles is ~208 days. Four
+#     runs a day puts ~830 runs inside that window, so the job would have to be
+#     broken for seven months before a single bar is permanently lost.
+#   * Each run re-pulls a 210-day lookback, so consecutive runs overlap almost
+#     entirely: a missed run is backfilled by the next one instead of leaving a
+#     hole. That is what makes six-hourly safe rather than merely frequent.
+#   * Funding settles hourly. Six-hourly captures every settlement within at
+#     most six hours, which is immaterial for an archive that is read in
+#     backtests, not in real time.
+#   * It is deliberately NOT hourly: that would quadruple ~200 public /info
+#     requests per run for zero extra coverage, since every run already re-reads
+#     the entire retained window.
+#   * Minute 17 rather than 0 keeps it off the hour, where funding settles and
+#     where every other cron in this cluster lands.
+# ---------------------------------------------------------------------------
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: bot-trading-collector
+  labels:
+    app.kubernetes.io/name: bot-trading
+    app.kubernetes.io/component: collector
+spec:
+  schedule: "17 */6 * * *"
+  timeZone: Etc/UTC
+  # A run reads and rewrites the same CSV files. Two overlapping runs would
+  # race on the atomic rename, so a late run is skipped rather than doubled.
+  concurrencyPolicy: Forbid
+  # If the controller was down over a scheduled time, still start once it is
+  # back, provided the slot is less than ten minutes stale.
+  startingDeadlineSeconds: 600
+  successfulJobsHistoryLimit: 2
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bot-trading
+        app.kubernetes.io/component: collector
+    spec:
+      backoffLimit: 1
+      # A full sweep measures ~3-4 minutes (13 symbols x 3 units, ~200 public
+      # requests plus the inter-unit pauses). 45 minutes is generous headroom
+      # for a slow API day and still far inside the six-hour period.
+      activeDeadlineSeconds: 2700
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: bot-trading
+            app.kubernetes.io/component: collector
+        spec:
+          restartPolicy: Never
+          serviceAccountName: bot-trading
+          automountServiceAccountToken: false
+          # The PV is a local directory on this node; the pod must land there.
+          nodeSelector: {kubernetes.io/hostname: gabo-vm-arm}
+          imagePullSecrets:
+            - name: ghcr-pull-secret
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1001
+            runAsGroup: 1001
+            fsGroup: 1001
+            fsGroupChangePolicy: OnRootMismatch
+            seccompProfile:
+              type: RuntimeDefault
+          containers:
+            - name: collector
+              image: ghcr.io/gabrielwyp/bot-trading:bootstrap
+              imagePullPolicy: IfNotPresent
+              command: ["python", "/opt/collector/collect.py"]
+              envFrom:
+                # No secretRef: reading Hyperliquid needs no credential, and
+                # this workload must never acquire one. It only ever calls the
+                # read-only download commands.
+                - configMapRef:
+                    name: bot-trading-collector-config
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop:
+                    - ALL
+              volumeMounts:
+                - name: market-history
+                  mountPath: /var/lib/bot-trading/cache
+                - name: collector-script
+                  mountPath: /opt/collector
+                  readOnly: true
+                # The image sets HOME and TMPDIR to /tmp, and the root
+                # filesystem is read-only, so this is the only writable scratch.
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: market-history
+              persistentVolumeClaim:
+                claimName: market-history
+            - name: collector-script
+              configMap:
+                name: bot-trading-collector-script
+                defaultMode: 0444
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
