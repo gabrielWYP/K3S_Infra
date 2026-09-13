@@ -32,10 +32,21 @@ jobs:
           test "$(grep --count '^kind: Service$' "${rendered}")" = "1"
           test "$(grep --count '^kind: IngressRoute$' "${rendered}")" = "1"
           grep --fixed-strings --quiet "ghcr.io/gabrielwyp/bot-trading:bootstrap" "${rendered}"
-          # The monitor reads a public Hyperliquid endpoint: it must never
-          # grow a Secret or a secretRef.
+          # No Secret manifest may ever be committed; the deploy workflow
+          # creates them out of band from repository secrets.
           test "$(grep --count '^kind: Secret$' "${rendered}" || true)" = "0"
-          test "$(grep --count 'secretRef' "${rendered}" || true)" = "0"
+          # Reading Hyperliquid needs no credentials, so the only secretRef
+          # this app may carry is the opt-in Telegram one, and it must stay
+          # optional: a required Secret would crash-loop the pod on any
+          # cluster where alerting is not configured.
+          refs="$(grep --count 'secretRef' "${rendered}" || true)"
+          test "${refs}" -le 1
+          if [ "${refs}" = "1" ]; then
+            grep --after-context=2 'secretRef' "${rendered}" \
+              | grep --quiet 'name: bot-trading-telegram'
+            grep --after-context=2 'secretRef' "${rendered}" \
+              | grep --quiet 'optional: true'
+          fi
           # Every resource must inherit the namespace from the kustomization,
           # so no manifest may hardcode it in its own metadata.
           resources="$(grep --count '^kind: ' "${rendered}")"
