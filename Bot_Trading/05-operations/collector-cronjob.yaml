@@ -10,24 +10,42 @@
 # no credential: the Hyperliquid /info endpoint is public, so there is no
 # Secret here and no imagePullSecret-independent credential of any kind.
 #
-# ---------------------------------------------------------------------------
-# Schedule: every six hours, at minute 17. Why:
+# ===========================================================================
+# Schedule: twice a day, at minute 17. Why:
+# ===========================================================================
 #
-#   * The binding horizon is the 1h series: ~5000 candles is ~208 days. Four
-#     runs a day puts ~830 runs inside that window, so the job would have to be
-#     broken for seven months before a single bar is permanently lost.
-#   * Each run re-pulls a 210-day lookback, so consecutive runs overlap almost
-#     entirely: a missed run is backfilled by the next one instead of leaving a
-#     hole. That is what makes six-hourly safe rather than merely frequent.
-#   * Funding settles hourly. Six-hourly captures every settlement within at
-#     most six hours, which is immaterial for an archive that is read in
-#     backtests, not in real time.
-#   * It is deliberately NOT hourly: that would quadruple ~200 public /info
-#     requests per run for zero extra coverage, since every run already re-reads
-#     the entire retained window.
+#   * THE RUN IS NOW LONG. It sweeps the full universe -- 354 contracts today,
+#     discovered at runtime -- at 1d/4h/1h/15m plus hourly funding. That is
+#     ~1,770 units. The FIRST run is a deep pull of everything the venue still
+#     retains: ~10,600 requests at the client's measured 0.75s spacing is ~2.2h,
+#     plus per-unit subprocess overhead, so 2.5-3h. Every later run is
+#     incremental (7 days per unit, one request each) at ~35 minutes.
+#
+#   * SIX-HOURLY NO LONGER FITS. The previous 13-symbol basket swept in 3-4
+#     minutes. A 35-minute incremental run inside a six-hour period would be
+#     fine, but a 3-hour deep re-sweep would not leave enough room, and with
+#     `concurrencyPolicy: Forbid` an overrun does not queue -- it silently skips
+#     the next slot. Twelve-hourly leaves ~9h of slack after the longest run.
+#
+#   * TWICE DAILY IS STILL FAR MORE THAN RETENTION NEEDS. The binding interval
+#     is now 15m at ~52 days retained, and the job asks for 65 days. Two runs a
+#     day puts ~104 runs inside that window, so the job would have to be broken
+#     for the better part of two months before a single 15m bar is permanently
+#     lost. 1h (208 days), 4h (833) and 1d (2,216) have far more margin again.
+#
+#   * OVERLAP IS WHAT MAKES IT SELF-HEALING. Each run re-asks for more than the
+#     gap since the last one, so a missed or failed run is backfilled by the
+#     next rather than leaving a hole. Any unit whose last deep pull is older
+#     than COLLECTOR_DEEP_REFRESH_DAYS is re-pulled to full retention, which
+#     repairs holes older than the incremental window too.
+#
+#   * Funding settles hourly. Twice-daily captures every settlement within at
+#     most twelve hours, which is immaterial for an archive read in backtests
+#     rather than in real time.
+#
 #   * Minute 17 rather than 0 keeps it off the hour, where funding settles and
 #     where every other cron in this cluster lands.
-# ---------------------------------------------------------------------------
+# ===========================================================================
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -36,10 +54,12 @@ metadata:
     app.kubernetes.io/name: bot-trading
     app.kubernetes.io/component: collector
 spec:
-  schedule: "17 */6 * * *"
+  schedule: "17 */12 * * *"
   timeZone: Etc/UTC
-  # A run reads and rewrites the same CSV files. Two overlapping runs would
-  # race on the atomic rename, so a late run is skipped rather than doubled.
+  # A run reads and rewrites the same CSV files and the same state file. Two
+  # overlapping runs would race on the atomic rename, so a late run is skipped
+  # rather than doubled. This matters more than it did: a deep run is hours
+  # long, so the window in which a second run could collide is now wide.
   concurrencyPolicy: Forbid
   # If the controller was down over a scheduled time, still start once it is
   # back, provided the slot is less than ten minutes stale.
@@ -53,10 +73,25 @@ spec:
         app.kubernetes.io/component: collector
     spec:
       backoffLimit: 1
-      # A full sweep measures ~3-4 minutes (13 symbols x 3 units, ~200 public
-      # requests plus the inter-unit pauses). 45 minutes is generous headroom
-      # for a slow API day and still far inside the six-hour period.
-      activeDeadlineSeconds: 2700
+      # 6 hours, and this is the number the deep run is sized against.
+      #
+      #   measured deep run   ~2.5-3h  (~10,600 requests at 0.75s + overhead)
+      #   incremental run     ~35 min
+      #   this deadline        6h      -> 2x the deep run
+      #   schedule period     12h      -> a stuck run is always reaped with
+      #                                   6h to spare before the next slot
+      #
+      # It applies to the whole Job including the one retry allowed above, so
+      # it is a hard ceiling and not a per-attempt one.
+      #
+      # Being killed here is not destructive: the collector records each
+      # completed deep unit in `.collector-state.json` on the volume as it
+      # goes, so the next run resumes from where the deadline stopped it
+      # instead of starting the sweep over. Units are also ordered deepest
+      # first (1d, 4h, funding, 1h, 15m), so a truncated first run has captured
+      # the six-year history for every contract rather than every interval for
+      # the first few contracts.
+      activeDeadlineSeconds: 21600
       template:
         metadata:
           labels:
@@ -91,11 +126,18 @@ spec:
                     name: bot-trading-collector-config
               resources:
                 requests:
-                  cpu: 50m
+                  cpu: 100m
                   memory: 128Mi
                 limits:
-                  cpu: 500m
-                  memory: 512Mi
+                  # Raised from 500m/512Mi for the full-universe sweep. The CLI
+                  # holds a whole merged series in memory before writing it, and
+                  # a 15m series grows 35,040 rows/year, so the peak working set
+                  # climbs with the archive rather than staying flat. gzip at
+                  # level 6 costs ~27 ms on today's largest file and ~190 ms on
+                  # an eight-year 15m one, which the extra CPU absorbs without
+                  # stretching the run.
+                  cpu: 1000m
+                  memory: 1Gi
               securityContext:
                 allowPrivilegeEscalation: false
                 readOnlyRootFilesystem: true
