@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bot-trading-config
+  labels:
+    app.kubernetes.io/name: bot-trading
+data:
+  # Public on-chain account address; the Hyperliquid info endpoint is read-only
+  # and unauthenticated, so the monitor needs no credentials of any kind.
+  HYPERLIQUID_ACCOUNT_ADDRESS: "0x50C41b0D0137B624BB83a63f69D955E16A6F4a90"
+  HYPERLIQUID_BASE_URL: "https://api.hyperliquid-testnet.xyz"
+  LOG_LEVEL: "INFO"
+  MONITOR_HTTP_PORT: "8080"
+  MONITOR_POLL_SECONDS: "30"
