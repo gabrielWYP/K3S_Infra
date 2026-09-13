@@ -22,6 +22,10 @@ on:
         required: true
       GHCR_PULL_TOKEN:
         required: true
+      TELEGRAM_BOT_TOKEN:
+        required: false
+      TELEGRAM_CHAT_ID:
+        required: false
   workflow_dispatch:
     inputs:
       image-tag:
@@ -148,6 +152,27 @@ jobs:
           kubectl create secret generic ghcr-pull-secret \
             --type=kubernetes.io/dockerconfigjson \
             --from-file=.dockerconfigjson="${secret_dir}/.dockerconfigjson" \
+            --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
+            | kubectl apply -f -
+
+      - name: Reconcile Telegram alerting secret
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TELEGRAM_BOT_TOKEN}" ] || [ -z "${TELEGRAM_CHAT_ID}" ]; then
+            echo "Telegram alerting is not configured; leaving the optional Secret absent."
+            exit 0
+          fi
+          secret_dir="$(mktemp -d)"
+          trap 'rm -rf "${secret_dir}"' EXIT
+          chmod 700 "${secret_dir}"
+          printf '%s' "${TELEGRAM_BOT_TOKEN}" > "${secret_dir}/TELEGRAM_BOT_TOKEN"
+          printf '%s' "${TELEGRAM_CHAT_ID}" > "${secret_dir}/TELEGRAM_CHAT_ID"
+          kubectl create secret generic bot-trading-telegram \
+            --from-file=TELEGRAM_BOT_TOKEN="${secret_dir}/TELEGRAM_BOT_TOKEN" \
+            --from-file=TELEGRAM_CHAT_ID="${secret_dir}/TELEGRAM_CHAT_ID" \
             --namespace "${KUBE_NAMESPACE}" --dry-run=client -o yaml \
             | kubectl apply -f -
 

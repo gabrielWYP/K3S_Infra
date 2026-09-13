@@ -49,6 +49,13 @@ spec:
             # agent-wallet Secret here; that is out of scope for this app.
             - configMapRef:
                 name: bot-trading-config
+            # Telegram alerting is opt-in. `optional: true` keeps the pod
+            # startable when the Secret is absent, which is the normal state
+            # until the operator configures a bot; the service then runs with
+            # notifications disabled instead of crash-looping.
+            - secretRef:
+                name: bot-trading-telegram
+                optional: true
           resources:
             requests:
               cpu: 50m
