@@ -13,7 +13,8 @@
 #   values go into the log line or structured_metadata.
 #   See: https://grafana.com/docs/loki/latest/get-started/labels/
 #
-# Namespace filter: only businessbot and monitoring — ignores kube-system noise.
+# Namespace filter: only bot-trading, businessbot and monitoring — ignores
+# kube-system noise.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -62,9 +63,9 @@ data:
               expression: '/var/log/pods/(?P<namespace>[^_]+)_(?P<pod>[^_]+)_[^/]+/(?P<container>[^/]+)/.*'
               source: filename
 
-          # Only keep businessbot and monitoring namespaces
+          # Only keep bot-trading, businessbot and monitoring namespaces
           - match:
-              selector: '{namespace=~"businessbot|monitoring"}'
+              selector: '{namespace=~"bot-trading|businessbot|monitoring"}'
               stages:
                 # Parse Winston JSON log line
                 - json:
@@ -93,6 +94,6 @@ data:
 
           # Drop pods from namespaces we don't care about
           - match:
-              selector: '{namespace!~"businessbot|monitoring"}'
+              selector: '{namespace!~"bot-trading|businessbot|monitoring"}'
               action: drop
 

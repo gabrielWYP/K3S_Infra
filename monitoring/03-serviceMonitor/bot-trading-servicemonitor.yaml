@@ -1,0 +1,22 @@
+# Scrape target for the Hyperliquid position monitor.
+# The `release: prometheus` label is what the kube-prometheus-stack operator
+# selects on; without it the ServiceMonitor is created but never picked up.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: bot-trading-monitor
+  namespace: monitoring
+  labels:
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - bot-trading
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bot-trading
+      app.kubernetes.io/component: monitor
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

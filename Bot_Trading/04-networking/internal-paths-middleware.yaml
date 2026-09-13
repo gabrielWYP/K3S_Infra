@@ -1,0 +1,27 @@
+# Edge deny for the operational endpoints.
+#
+# /metrics leaks position sizes and account activity, and /ready is a
+# cluster-internal probe surface; neither should answer to the public
+# internet. Both consumers live inside the cluster and reach the Service
+# directly (Prometheus via the ServiceMonitor, the kubelet via the pod IP),
+# so they never traverse Traefik and lose nothing here.
+#
+# Traefik v3 has no explicit "deny" middleware, so the canonical idiom is an
+# ipAllowList whose range no external client can ever match: every request
+# arriving through the OCI load balancer is rejected with 403. The source
+# address is evaluated at the connection level (no ipStrategy configured),
+# so a forged X-Forwarded-For header cannot bypass it.
+#
+# Declared as a Middleware object next to the IngressRoute, following the
+# Movistar/04-networking/analyst-auth-middleware.yaml precedent.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: bot-trading-internal-paths
+  labels:
+    app.kubernetes.io/name: bot-trading
+    app.kubernetes.io/component: monitor
+spec:
+  ipAllowList:
+    sourceRange:
+      - 127.0.0.1/32

@@ -6,6 +6,7 @@ resources:
   - 01-PV/storageclass.yaml
   - 02-config/namespace.yaml
   - 03-serviceMonitor/serviceMonitor.yaml
+  - 03-serviceMonitor/bot-trading-servicemonitor.yaml
   - 04-loki/pv.yaml
   - 04-loki/pvc.yaml
   - 04-loki/configmap.yaml
