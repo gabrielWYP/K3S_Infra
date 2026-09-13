@@ -1,0 +1,81 @@
+# Durable market-history archive for the collector CronJob.
+#
+# Hyperliquid retains only ~5000 candles per interval, so a bar not captured
+# before it ages out is gone permanently. This volume is the archive that turns
+# that sliding window into a growing dataset; losing it means losing history
+# that cannot be re-downloaded.
+#
+# The cluster's StorageClass is `local-storage` with
+# `provisioner: kubernetes.io/no-provisioner`, so nothing is provisioned
+# dynamically: the PV is written by hand, pinned to the node that physically
+# holds the directory, and the PVC is bound to it explicitly with `volumeName`.
+# `persistentVolumeReclaimPolicy: Retain` keeps the data on disk even if the
+# claim is deleted by accident.
+#
+# ---------------------------------------------------------------------------
+# Capacity: 2Gi. Arithmetic, from measured rows rather than a guess.
+# ---------------------------------------------------------------------------
+# Row size, measured on real cached files (data/cache):
+#   1h candles      66,349 bytes / 1,051 rows = 63 B/row
+#   hourly funding  64,981 bytes / 1,052 rows = 62 B/row
+#   -> round up to 70 B/row to cover longer prices and HIP-3 tickers.
+#
+# Rows per symbol per year:
+#   1h candles   24 * 365 = 8,760
+#   4h candles    6 * 365 = 2,190
+#   hourly funding         = 8,760
+#                          ---------
+#                            19,710 rows = ~1.38 MB/symbol/year
+#
+# Basket of 13 symbols  ->  ~18 MB/year.
+#   10 years of accumulation        ~180 MB
+#   x4 headroom for a larger basket ~720 MB  (52 symbols, or more timeframes)
+#   + atomic rewrite scratch: the CSV cache writes a full temp copy beside the
+#     target before renaming, so peak usage is ~2x the largest single file
+#     (a few MB) -- negligible against the total.
+#
+# 2Gi therefore covers roughly a decade of a basket four times this size, and
+# is small enough to stay honest about what the node actually has.
+#
+# ---------------------------------------------------------------------------
+# Operator prerequisite, once per node, before the first apply:
+#
+#   sudo mkdir -p /mnt/tesis_data/bot-trading-market-history
+#   sudo chown 1001:1001 /mnt/tesis_data/bot-trading-market-history
+#   sudo chmod 0770 /mnt/tesis_data/bot-trading-market-history
+#
+# A local PV does not create its path: the kubelet fails the mount if the
+# directory is absent. Movistar covers the same prerequisite with a one-off
+# preflight Job that is deliberately kept out of its kustomization; this app
+# has a single directory and no reason to ship a privileged Job for it.
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: bot-trading-market-history
+  labels:
+    app.kubernetes.io/name: bot-trading
+    app.kubernetes.io/component: collector
+spec:
+  capacity: {storage: 2Gi}
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  local: {path: /mnt/tesis_data/bot-trading-market-history}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [gabo-vm-arm]}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: market-history
+  labels:
+    app.kubernetes.io/name: bot-trading
+    app.kubernetes.io/component: collector
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-storage
+  volumeName: bot-trading-market-history
+  resources: {requests: {storage: 2Gi}}

@@ -1,0 +1,312 @@
+# Collector configuration, kept out of the image on purpose.
+#
+# The basket, the timeframes and the lookback are research decisions that change
+# far more often than the code does. Baking them into ghcr.io/gabrielwyp/bot-trading
+# would mean rebuilding and re-rolling the image to add a symbol; here a
+# `kubectl apply` and the next scheduled run is enough.
+#
+# This ConfigMap is separate from `bot-trading-config` so that the monitor
+# Deployment's environment is not touched by anything the collector needs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bot-trading-collector-config
+  labels:
+    app.kubernetes.io/name: bot-trading
+    app.kubernetes.io/component: collector
+data:
+  # Public on-chain address. The Hyperliquid /info endpoint is unauthenticated,
+  # so the collector needs no Secret of any kind -- and deliberately has none.
+  HYPERLIQUID_ACCOUNT_ADDRESS: "0x50C41b0D0137B624BB83a63f69D955E16A6F4a90"
+
+  # Mainnet, not testnet. Testnet history is worthless for research, and HIP-3
+  # deployer dexes only exist here. The monitor's own ConfigMap still points at
+  # testnet; the two are independent on purpose.
+  HYPERLIQUID_BASE_URL: "https://api.hyperliquid.xyz"
+
+  LOG_LEVEL: "INFO"
+
+  # Basket, chosen from measured liquidity and correlation.
+  #
+  # Main dex: BTC and ETH as the two beta legs, SOL/LINK/DOGE/XRP as liquid
+  # majors with distinct drivers, HYPE as the venue's own token, ZEC as the
+  # least correlated large cap on the book.
+  #
+  # HIP-3 (xyz): the only deployer dex with real turnover (~$788M/24h against
+  # the main venue's ~$2,747M). SP500 and XYZ100 are index exposure, NVDA and
+  # TSLA single-name equity, GOLD a macro hedge -- none of which correlates with
+  # the crypto legs, which is the point of collecting them.
+  #
+  # NOT included: km, flx, vntl and the other idle dexes. They report $0.00M
+  # volume and zero open interest; a zero funding rate there is not cheap carry,
+  # it means nothing trades, and the series would be noise in the archive.
+  #
+  # A HIP-3 contract is spelled exactly as the venue names it, `<dex>:<ASSET>`.
+  # The dex prefix is CASE-SENSITIVE and lower case: `XYZ:SP500` is an HTTP 500.
+  COLLECTOR_SYMBOLS: >-
+    BTC/USDC ETH/USDC SOL/USDC LINK/USDC HYPE/USDC ZEC/USDC DOGE/USDC XRP/USDC
+    xyz:SP500 xyz:NVDA xyz:TSLA xyz:GOLD xyz:XYZ100
+
+  # 1h is the research bar; 4h is the same information at a horizon where the
+  # bid-ask cost of a signal stops dominating it. Both are cached separately.
+  COLLECTOR_TIMEFRAMES: "1h 4h"
+
+  # Funding is hourly and is not derivable from candles, so a perpetual backtest
+  # is dishonest without it. One series per symbol, no timeframe.
+  COLLECTOR_FUNDING: "true"
+
+  # 210 days. The venue retains ~5000 candles per interval, which at 1h is ~208
+  # days: asking for the full retained window every run makes the archive
+  # self-healing, because any hole left by a failed run is refilled by the next
+  # one rather than becoming permanent. It costs ~15 requests per symbol.
+  COLLECTOR_LOOKBACK_DAYS: "210"
+
+  # A courtesy pause between units so a 13-symbol sweep trickles ~200 public
+  # requests over minutes instead of bursting them.
+  COLLECTOR_PAUSE_SECONDS: "2"
+
+  # A single hung download can never eat the whole run's deadline.
+  COLLECTOR_UNIT_TIMEOUT_SECONDS: "300"
+
+  COLLECTOR_CACHE_DIR: "/var/lib/bot-trading/cache"
+---
+# The collector driver, mounted read-only rather than baked into the image, for
+# the same reason as the basket: it is operational glue over the shipped CLI,
+# not application code. It drives `trading-bot download` and
+# `trading-bot download-funding` one subprocess at a time so that a single dead
+# contract cannot take the rest of the basket down with it.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: bot-trading-collector-script
+  labels:
+    app.kubernetes.io/name: bot-trading
+    app.kubernetes.io/component: collector
+data:
+  collect.py: |
+    """Accumulate Hyperliquid market history into the mounted cache.
+
+    Hyperliquid retains roughly 5000 candles per interval, so a bar that is not
+    captured before it ages out is gone for good. This job exists to turn that
+    sliding window into a growing archive: every run re-downloads the whole
+    retained window and merges it into the CSV cache, which is keyed by timestamp,
+    so a repeated row costs nothing and a missing one is filled in.
+
+    It drives the shipped CLI (``trading-bot download`` and
+    ``trading-bot download-funding``) as a subprocess per unit of work. That is
+    deliberate: one dead contract — delisted, illiquid, or renamed by its HIP-3
+    deployer — must not take the other twelve down with it, and a separate process
+    per unit is the cheapest way to guarantee that.
+
+    Every line written to stdout is one JSON object carrying exactly the five
+    fields the cluster's promtail pipeline parses: ``level``, ``message``,
+    ``service``, ``requestId`` and ``timestamp``. Nothing is added, renamed or
+    dropped; per-unit detail goes inside ``message`` as ``key=value`` pairs.
+    """
+
+    from __future__ import annotations
+
+    import json
+    import os
+    import subprocess
+    import sys
+    import time
+    import uuid
+    from datetime import UTC, datetime, timedelta
+
+    #: Value of the ``service`` field on every line, matching the monitor's
+    #: convention (``bot-trading-monitor``) so both workloads share a dashboard.
+    SERVICE_NAME = "bot-trading-collector"
+
+    #: Executable the units are driven through. It is on PATH because the image
+    #: puts the virtualenv's bin directory first.
+    CLI = "trading-bot"
+
+
+    def _rfc3339_nano(moment: datetime) -> str:
+        """Format an instant the way the log pipeline expects.
+
+        Python resolves wall clock time to microseconds, so the last three digits
+        are always zero; nine fractional digits are still emitted because that is
+        the shape ``RFC3339Nano`` parsing wants.
+        """
+        return f"{moment:%Y-%m-%dT%H:%M:%S}.{moment.microsecond:06d}000Z"
+
+
+    def log(level: str, message: str, run_id: str) -> None:
+        """Write one structured line to stdout."""
+        payload = {
+            "level": level,
+            "message": message,
+            "service": SERVICE_NAME,
+            "requestId": run_id,
+            "timestamp": _rfc3339_nano(datetime.now(tz=UTC)),
+        }
+        print(json.dumps(payload, separators=(",", ":"), ensure_ascii=False), flush=True)
+
+
+    def env_text(name: str, default: str) -> str:
+        """Read a trimmed environment value, falling back when unset or blank."""
+        return os.environ.get(name, "").strip() or default
+
+
+    def env_int(name: str, default: int, minimum: int = 1) -> int:
+        """Read an integer environment value, falling back when unusable.
+
+        Args:
+            name: Variable to read.
+            default: Value used when unset, blank or not a number.
+            minimum: Smallest value accepted. 0 where disabling the setting is
+                meaningful, such as the inter-unit pause.
+        """
+        try:
+            value = int(env_text(name, str(default)))
+        except ValueError:
+            return default
+        return value if value >= minimum else default
+
+
+    def summarise(stdout: str) -> str:
+        """Condense a CLI report into one ``key=value`` fragment.
+
+        The CLI prints pipe-delimited rows such as ``stored|5040``. Only the counts
+        and the range are worth carrying into a log line.
+        """
+        wanted = ("downloaded", "stored", "first_open_time", "last_open_time", "first_stamp", "last_stamp")
+        parts = []
+        for line in stdout.splitlines():
+            key, _, value = line.partition("|")
+            if key in wanted and value:
+                parts.append(f"{key}={value}")
+        return " ".join(parts)
+
+
+    def first_error(stdout: str, stderr: str) -> str:
+        """Return a single-line reason for a failed unit."""
+        for stream in (stderr, stdout):
+            for line in reversed(stream.strip().splitlines()):
+                if line.strip():
+                    return line.strip()[:300]
+        return "no output"
+
+
+    def run_unit(argv: list[str], timeout: int) -> tuple[bool, str]:
+        """Run one CLI invocation, never letting it raise.
+
+        Returns:
+            Whether the unit succeeded, and a one-line summary for the log.
+        """
+        try:
+            completed = subprocess.run(  # noqa: S603 - fixed argv, no shell
+                argv,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return False, f"timeout after {timeout}s"
+        except OSError as exc:
+            return False, f"could not start {CLI}: {exc}"
+
+        if completed.returncode == 0:
+            return True, summarise(completed.stdout)
+        return False, f"exit={completed.returncode} {first_error(completed.stdout, completed.stderr)}"
+
+
+    def main() -> int:
+        """Collect every configured symbol, tolerating individual failures."""
+        run_id = str(uuid.uuid4())
+
+        symbols = env_text("COLLECTOR_SYMBOLS", "").split()
+        timeframes = env_text("COLLECTOR_TIMEFRAMES", "1h 4h").split()
+        cache_dir = env_text("COLLECTOR_CACHE_DIR", "/var/lib/bot-trading/cache")
+        lookback_days = env_int("COLLECTOR_LOOKBACK_DAYS", 210)
+        pause_seconds = env_int("COLLECTOR_PAUSE_SECONDS", 2, minimum=0)
+        unit_timeout = env_int("COLLECTOR_UNIT_TIMEOUT_SECONDS", 300)
+        collect_funding = env_text("COLLECTOR_FUNDING", "true").lower() not in {"false", "0", "no"}
+
+        if not symbols:
+            log("ERROR", "config error: COLLECTOR_SYMBOLS is empty, nothing to collect", run_id)
+            return 1
+
+        start = (datetime.now(tz=UTC) - timedelta(days=lookback_days)).date().isoformat()
+        log(
+            "INFO",
+            f"run started symbols={len(symbols)} timeframes={','.join(timeframes)} "
+            f"funding={str(collect_funding).lower()} lookback_days={lookback_days} start={start} "
+            f"cache_dir={cache_dir}",
+            run_id,
+        )
+
+        healthy: list[str] = []
+        degraded: list[str] = []
+        dead: list[str] = []
+        started = time.monotonic()
+
+        for symbol in symbols:
+            units: list[tuple[str, list[str]]] = [
+                (
+                    f"candles:{timeframe}",
+                    [CLI, "--cache-dir", cache_dir, "download", "--symbol", symbol,
+                     "--timeframe", timeframe, "--start", start],
+                )
+                for timeframe in timeframes
+            ]
+            if collect_funding:
+                units.append(
+                    (
+                        "funding",
+                        [CLI, "--cache-dir", cache_dir, "download-funding",
+                         "--symbol", symbol, "--start", start],
+                    )
+                )
+
+            failures = 0
+            for label, argv in units:
+                ok, detail = run_unit(argv, unit_timeout)
+                if ok:
+                    log("INFO", f"collected symbol={symbol} unit={label} {detail}".strip(), run_id)
+                else:
+                    failures += 1
+                    log("ERROR", f"unit failed symbol={symbol} unit={label} reason={detail}", run_id)
+                if pause_seconds:
+                    time.sleep(pause_seconds)
+
+            if failures == 0:
+                healthy.append(symbol)
+            elif failures < len(units):
+                degraded.append(symbol)
+                log(
+                    "WARN",
+                    f"symbol partially collected symbol={symbol} "
+                    f"failed_units={failures}/{len(units)}",
+                    run_id,
+                )
+            else:
+                dead.append(symbol)
+                log(
+                    "WARN",
+                    f"symbol collected nothing symbol={symbol} failed_units={failures}/{len(units)}; "
+                    "the other symbols are unaffected",
+                    run_id,
+                )
+
+        elapsed = int(time.monotonic() - started)
+        # A single dead contract — delisted, or an idle HIP-3 dex the deployer
+        # renamed — must never fail the run. Only a run that collected nothing at
+        # all is a real failure worth alerting on.
+        every_symbol_failed = not healthy and not degraded
+        level = "ERROR" if every_symbol_failed else "INFO"
+        log(
+            level,
+            f"run finished healthy={len(healthy)} degraded={len(degraded)} dead={len(dead)} "
+            f"total={len(symbols)} elapsed_seconds={elapsed}"
+            + (f" dead_symbols={','.join(dead)}" if dead else ""),
+            run_id,
+        )
+        return 1 if every_symbol_failed else 0
+
+
+    if __name__ == "__main__":
+        sys.exit(main())
