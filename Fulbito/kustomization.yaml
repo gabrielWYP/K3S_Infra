@@ -1,0 +1,17 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: fulbito
+
+resources:
+  - 00-storage/data-pvc.yaml
+  - 01-rbac/serviceaccount.yaml
+  - 03-workloads/deployment.yaml
+  - 04-networking/service.yaml
+  - 04-networking/security-headers-middleware.yaml
+  - 04-networking/ingressroute.yaml
+
+images:
+  - name: ghcr.io/gabrielwyp/fulbito-escolar
+    newName: ghcr.io/gabrielwyp/fulbito-escolar
+    newTag: bootstrap

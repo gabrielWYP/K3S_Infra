@@ -1,0 +1,17 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: fulbito-escolar
+  labels:
+    app.kubernetes.io/name: fulbito-escolar
+spec:
+  entryPoints:
+    - web
+  routes:
+    - kind: Rule
+      match: Host(`fulbito.ikigais.app`)
+      middlewares:
+        - name: fulbito-security-headers
+      services:
+        - name: fulbito-escolar
+          port: 8080

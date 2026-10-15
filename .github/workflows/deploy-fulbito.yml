@@ -1,0 +1,109 @@
+name: Deploy Fulbito
+
+on:
+  workflow_call:
+    inputs:
+      image-tag:
+        description: Immutable image tag (main-<sha12>)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-fulbito
+  cancel-in-progress: false
+
+env:
+  KUBE_NAMESPACE: fulbito
+  PUBLIC_HOST: fulbito.ikigais.app
+  IMAGE: ghcr.io/gabrielwyp/fulbito-escolar
+
+jobs:
+  deploy:
+    name: Deploy to K3S
+    # In-cluster runner pod (Fulbito/ci-runner); its ServiceAccount can only
+    # touch the fulbito namespace, so no kubeconfig secret is involved.
+    runs-on: [self-hosted, fulbito]
+    env:
+      IMAGE_TAG: ${{ inputs.image-tag }}
+    steps:
+      - name: Checkout infrastructure
+        uses: actions/checkout@v6
+        with:
+          repository: gabrielwyp/K3S_Infra
+          ref: main
+
+      - name: Validate deployment inputs
+        run: |
+          set -euo pipefail
+          [[ "${IMAGE_TAG}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] || {
+            echo "::error::Invalid OCI image tag"
+            exit 1
+          }
+
+      - name: Install kubectl
+        run: |
+          set -euo pipefail
+          KUBECTL_VERSION="v1.34.3"
+          case "$(uname -m)" in
+            x86_64) ARCH_SUFFIX="amd64" ;;
+            aarch64) ARCH_SUFFIX="arm64" ;;
+            *) echo "Unsupported architecture"; exit 1 ;;
+          esac
+          INSTALL_DIR="${RUNNER_TEMP}/kubectl-${KUBECTL_VERSION}"
+          mkdir -p "${INSTALL_DIR}"
+          base="https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${ARCH_SUFFIX}"
+          curl -fsSL "${base}/kubectl" -o "${INSTALL_DIR}/kubectl"
+          curl -fsSL "${base}/kubectl.sha256" -o "${INSTALL_DIR}/kubectl.sha256"
+          (cd "${INSTALL_DIR}" && echo "$(cat kubectl.sha256)  kubectl" | sha256sum --check)
+          chmod u+x "${INSTALL_DIR}/kubectl"
+          echo "${INSTALL_DIR}" >> "${GITHUB_PATH}"
+
+      - name: Check runtime secret
+        run: |
+          set -euo pipefail
+          kubectl get secret fulbito-admin --namespace "${KUBE_NAMESPACE}" > /dev/null || {
+            echo "::error::Secret fulbito/fulbito-admin is missing (see Fulbito/README.md)"
+            exit 1
+          }
+
+      - name: Apply immutable release
+        run: |
+          set -euo pipefail
+          sed -i "s/newTag: bootstrap/newTag: ${IMAGE_TAG}/" Fulbito/kustomization.yaml
+          kubectl kustomize Fulbito | grep --fixed-strings --quiet "${IMAGE}:${IMAGE_TAG}"
+          kubectl apply -k Fulbito
+
+      - name: Wait for rollout
+        run: kubectl rollout status deployment/fulbito-escolar --namespace "${KUBE_NAMESPACE}" --timeout=5m
+
+      - name: Verify service health
+        run: |
+          set -euo pipefail
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors \
+            "http://fulbito-escolar.${KUBE_NAMESPACE}.svc.cluster.local:8080/health"
+          echo
+          curl -fsS --retry 6 --retry-delay 5 --retry-all-errors \
+            -H "Host: ${PUBLIC_HOST}" "http://traefik.kube-system.svc.cluster.local/health"
+          echo
+
+      - name: Probe public URL (informative)
+        run: |
+          code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "https://${PUBLIC_HOST}/health" || true)"
+          if [ "${code}" = "200" ]; then
+            echo "Public URL OK"
+          else
+            echo "::warning::https://${PUBLIC_HOST}/health answered ${code}; check the Cloudflare DNS record"
+          fi
+
+      - name: Roll back failed release
+        if: failure()
+        run: kubectl rollout undo deployment/fulbito-escolar --namespace "${KUBE_NAMESPACE}" || true
+
+      - name: Deployment diagnostics
+        if: failure()
+        run: |
+          kubectl get deployments,pods,services,ingressroutes --namespace "${KUBE_NAMESPACE}" -o wide || true
+          kubectl get events --namespace "${KUBE_NAMESPACE}" --sort-by='.lastTimestamp' | tail -30 || true

@@ -1,0 +1,70 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fulbito-runner
+  labels:
+    app.kubernetes.io/name: fulbito-runner
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: fulbito-runner
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: fulbito-runner
+    spec:
+      serviceAccountName: fulbito-deployer
+      automountServiceAccountToken: true
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: runner
+          image: myoung34/github-runner:2.338.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: RUNNER_SCOPE
+              value: repo
+            - name: REPO_URL
+              value: https://github.com/gabrielWYP/fulbito-escolar
+            - name: RUNNER_NAME
+              value: fulbito-k3s-runner
+            - name: LABELS
+              value: fulbito,k3s
+            - name: RUNNER_WORKDIR
+              value: /tmp/runner/work
+            - name: CONFIGURED_ACTIONS_RUNNER_FILES_DIR
+              value: /runner-config
+            - name: DISABLE_AUTOMATIC_DEREGISTRATION
+              value: "true"
+            - name: DISABLE_AUTO_UPDATE
+              value: "true"
+            - name: RUNNER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: fulbito-runner-registration
+                  key: RUNNER_TOKEN
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+          volumeMounts:
+            - name: runner-config
+              mountPath: /runner-config
+            - name: work
+              mountPath: /tmp/runner
+      volumes:
+        - name: runner-config
+          persistentVolumeClaim:
+            claimName: fulbito-runner-config
+        - name: work
+          emptyDir:
+            sizeLimit: 2Gi
