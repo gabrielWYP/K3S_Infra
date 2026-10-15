@@ -1,0 +1,12 @@
+# Bootstrap component: applied once by hand (see Fulbito/README.md), NOT by the
+# deploy workflow, so a release can never rewrite the runner that executes it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: fulbito
+
+resources:
+  - namespace.yaml
+  - rbac.yaml
+  - runner-pvc.yaml
+  - runner-deployment.yaml

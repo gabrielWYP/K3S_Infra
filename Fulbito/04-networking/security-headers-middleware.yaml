@@ -1,0 +1,12 @@
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: fulbito-security-headers
+  labels:
+    app.kubernetes.io/name: fulbito-escolar
+spec:
+  headers:
+    stsSeconds: 31536000
+    stsIncludeSubdomains: false
+    contentTypeNosniff: true
+    referrerPolicy: strict-origin-when-cross-origin

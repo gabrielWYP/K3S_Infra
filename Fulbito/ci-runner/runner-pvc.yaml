@@ -1,0 +1,15 @@
+# Persists the runner registration (.runner/.credentials) so a pod restart
+# reuses it instead of needing a fresh 1h registration token.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: fulbito-runner-config
+  labels:
+    app.kubernetes.io/name: fulbito-runner
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 100Mi
